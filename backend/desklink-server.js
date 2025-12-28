@@ -1,7 +1,5 @@
 // desklink-server.js - Local-only backend for DeskLink / in-meeting remote control
 // -------------------------------------------------------------
-import express from "express";
-import cors from "cors";
 
 // Runs independently of the existing backend/server.js.
 // Uses in-memory Maps for sessions and device/user mappings so
@@ -16,8 +14,8 @@ const path = require('path');
 // without touching backend/server.js or its code.
 module.paths.push(path.join(__dirname, 'backend', 'node_modules'));
 
-//const express = require('express');
-//const cors = require('cors');
+const express = require('express');
+const cors = require('cors');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 
@@ -156,7 +154,6 @@ function generateEphemeralToken(kind, sessionId) {
 
 const app = express();
 
-import cors from 'cors';
 
 app.use(
   cors({
@@ -771,9 +768,6 @@ io.on('connection', (socket) => {
 // ---------------------------------------------------------------------------
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`DeskLink server running on port ${PORT}`);
-});
 
 server.listen(PORT, () => {
   console.log(`DeskLink local server listening on http://localhost:${PORT}`);
