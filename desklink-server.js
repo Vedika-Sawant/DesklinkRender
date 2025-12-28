@@ -4,6 +4,7 @@
 // Uses in-memory Maps for sessions and device/user mappings so
 // you can test the full "request → accept → session start" flow
 // without Render or Mongo.
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
 const http = require('http');
 const path = require('path');
@@ -152,11 +153,15 @@ function generateEphemeralToken(kind, sessionId) {
 
 const app = express();
 
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true
-}));
+import cors from 'cors';
+
+app.use(
+  cors({
+    origin: CLIENT_ORIGIN,
+    credentials: true,
+  })
+);
+
 
 app.use(express.json());
 
