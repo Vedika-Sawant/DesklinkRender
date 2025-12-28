@@ -1,0 +1,78 @@
+import React, { useState } from 'react';
+import { Send, Smile, Paperclip } from 'lucide-react'; // 💡 Import the real icons
+
+export default function InputBar({ onSend }) {
+  const [value, setValue] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!value.trim()) return;
+    onSend(value);
+    setValue('');
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      handleSubmit(e);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      // Used a darker, more defined border for separation
+      className="flex items-end gap-3 px-5 py-3 border-t border-slate-700 bg-slate-900/95 shadow-lg shadow-black/20"
+    >
+      
+      {/* 1. Emoji Button (Smile Icon) */}
+      <button
+        type="button"
+        className="w-10 h-10 rounded-full flex items-center justify-center text-lg 
+                   text-slate-400 hover:bg-slate-800 hover:text-indigo-400 transition-colors shrink-0"
+        title="Emoji"
+      >
+         <Smile className="w-5 h-5" />
+      </button>
+
+      {/* 2. Attachment Button (Paperclip Icon) */}
+      <button
+        type="button"
+        className="w-10 h-10 rounded-full flex items-center justify-center text-lg 
+                   text-slate-400 hover:bg-slate-800 hover:text-indigo-400 transition-colors shrink-0"
+        title="Attach File"
+      >
+         <Paperclip className="w-5 h-5" />
+      </button>
+
+      {/* 3. Textarea */}
+      <div className="flex-1 min-w-0">
+        <textarea
+          rows={1}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type a message..."
+          // Updated styling for better focus and appearance
+          className="w-full resize-none bg-slate-800 border border-slate-700 rounded-2xl 
+                     px-4 py-3 text-sm text-white placeholder:text-slate-500 
+                     focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all min-h-[44px]"
+          style={{ maxHeight: '150px' }} // Prevents text area from growing too large
+        />
+      </div>
+      
+      {/* 4. Send Button (Send Icon) */}
+      <button
+        type="submit"
+        disabled={!value.trim()}
+        className={`w-10 h-10 rounded-full flex items-center justify-center text-lg transition-colors shrink-0 ${
+            value.trim() 
+              ? 'bg-indigo-600 hover:bg-indigo-500 text-white' // Active send button
+              : 'bg-slate-700 text-slate-500 cursor-not-allowed' // Disabled send button
+        }`}
+        title="Send"
+      >
+         <Send className="w-5 h-5" />
+      </button>
+    </form>
+  );
+}
