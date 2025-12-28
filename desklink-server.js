@@ -1,5 +1,8 @@
 // desklink-server.js - Local-only backend for DeskLink / in-meeting remote control
 // -------------------------------------------------------------
+import express from "express";
+import cors from "cors";
+
 // Runs independently of the existing backend/server.js.
 // Uses in-memory Maps for sessions and device/user mappings so
 // you can test the full "request → accept → session start" flow
@@ -13,8 +16,8 @@ const path = require('path');
 // without touching backend/server.js or its code.
 module.paths.push(path.join(__dirname, 'backend', 'node_modules'));
 
-const express = require('express');
-const cors = require('cors');
+//const express = require('express');
+//const cors = require('cors');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 
