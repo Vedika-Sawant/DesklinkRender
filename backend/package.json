@@ -1,6 +1,7 @@
 {
   "name": "visiondesk-backend",
   "version": "1.0.0",
+  "type": "module",
   "description": "Backend for VisionDesk application",
   "main": "server.js",
   "scripts": {
