@@ -46,13 +46,19 @@ export const desklinkApi = {
   },
 
   // In-meeting remote access: webId-only (toUserId), deviceId resolved server-side
-  async requestMeetingRemote(token, targetUserId) {
+  async requestMeetingRemote(token, targetUserId, senderAuthId) {
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
+
+    if (senderAuthId) {
+      headers['x-user-id'] = senderAuthId;
+    }
+
     const res = await fetch(`${API_BASE}/remote/meeting-request`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       body: JSON.stringify({ toUserId: targetUserId }),
     });
     return parseJSON(res);

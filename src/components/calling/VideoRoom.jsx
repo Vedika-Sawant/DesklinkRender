@@ -93,7 +93,7 @@ function VideoRoomInner({
     // We intentionally run this once on mount to mirror the original behavior
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  
+
   // Expose test function globally for debugging
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -292,6 +292,7 @@ function VideoRoomInner({
                                 requestControlForUser({
                                   targetUserId: p.targetUserId,
                                   targetName: p.name || 'Participant',
+                                  senderAuthId: allParticipants.find((me) => me.id === userId)?.authUserId,
                                 })
                               }
                               className="text-[10px] px-2 py-1 rounded-md bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
@@ -470,11 +471,10 @@ function VideoRoomInner({
                 <button
                   type="button"
                   onClick={() => setMicLock(!hostMicLocked)}
-                  className={`px-2 py-0.5 rounded-full text-[10px] border ${
-                    hostMicLocked
+                  className={`px-2 py-0.5 rounded-full text-[10px] border ${hostMicLocked
                       ? 'bg-slate-800 border-slate-600 text-slate-200'
                       : 'bg-emerald-700/70 border-emerald-500 text-emerald-50'
-                  }`}
+                    }`}
                 >
                   {hostMicLocked ? 'Disabled' : 'Allowed'}
                 </button>
@@ -485,11 +485,10 @@ function VideoRoomInner({
                 <button
                   type="button"
                   onClick={() => setCameraLock(!hostCameraLocked)}
-                  className={`px-2 py-0.5 rounded-full text-[10px] border ${
-                    hostCameraLocked
+                  className={`px-2 py-0.5 rounded-full text-[10px] border ${hostCameraLocked
                       ? 'bg-slate-800 border-slate-600 text-slate-200'
                       : 'bg-emerald-700/70 border-emerald-500 text-emerald-50'
-                  }`}
+                    }`}
                 >
                   {hostCameraLocked ? 'Disabled' : 'Allowed'}
                 </button>
@@ -500,11 +499,10 @@ function VideoRoomInner({
                 <button
                   type="button"
                   onClick={() => setChatDisabled(!hostChatDisabled)}
-                  className={`px-2 py-0.5 rounded-full text-[10px] border ${
-                    hostChatDisabled
+                  className={`px-2 py-0.5 rounded-full text-[10px] border ${hostChatDisabled
                       ? 'bg-slate-800 border-slate-600 text-slate-200'
                       : 'bg-emerald-700/70 border-emerald-500 text-emerald-50'
-                  }`}
+                    }`}
                 >
                   {hostChatDisabled ? 'Disabled' : 'Allowed'}
                 </button>

@@ -25,13 +25,84 @@ const app = express();
 
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
-// Middleware
-app.use(
-  cors({
-    origin: CLIENT_ORIGIN,
-    credentials: true,
-  })
+// Dynamic CORS configuration: allow localhost, trycloudflare tunnels, and any
+// origins explicitly listed in CLIENT_ORIGIN (comma-separated).
+const allowedOrigins = new Set(
+  CLIENT_ORIGIN.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
 );
+
+function isOriginAllowed(origin) {
+  if (!origin) return true; // non-browser clients, mobile apps, curl
+
+  try {
+    const url = new URL(origin);
+    const host = url.host || '';
+
+    // 1. Allow localhost (dev)
+    if (
+      host.startsWith('localhost:') ||
+      host.startsWith('127.0.0.1:') ||
+      host === 'localhost' ||
+      host === '127.0.0.1'
+    ) {
+      return true;
+    }
+
+    // 2. Allow Cloudflare tunnels (*.trycloudflare.com)
+    if (host.endsWith('.trycloudflare.com')) {
+      // console.log('[CORS] Allowing Cloudflare tunnel:', origin);
+      return true;
+    }
+
+    // 3. Allow Render domains (*.onrender.com)
+    if (host.endsWith('.onrender.com')) {
+      return true;
+    }
+
+    // 4. Check explicit allowed origins list (e.g. env var)
+    if (allowedOrigins.has(origin)) {
+      return true;
+    }
+
+    // 5. Allow some common variations if needed or development
+    // Just in case the origin string comes in without protocol for some reason (rare for valid browsers)
+    if (allowedOrigins.has(host)) return true;
+
+  } catch (e) {
+    console.error('[CORS] Error parsing origin:', origin, e);
+    // If URL parsing fails, fall back to exact match
+    if (allowedOrigins.has(origin)) return true;
+  }
+
+  return false;
+}
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (isOriginAllowed(origin)) {
+      // Pass null, true to reflect the origin in Access-Control-Allow-Origin
+      return callback(null, true);
+    }
+
+    console.warn('[CORS] Blocked origin:', origin);
+    // Be explicit about why we blocked it in logs
+    // For now, to "fix at any cost", if we are unsure, we might want to default allow 
+    // BUT explicit allow of trycloudflare.com above should cover it.
+    // If you are extremely desperate, uncomment the next line to open to ALL (insecure):
+    // return callback(null, true); 
+
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-device-id', 'x-user-id', 'x-user-name'],
+};
+
+// Middleware
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 
 // Mount routes
@@ -51,7 +122,7 @@ createSocketServer(server, CLIENT_ORIGIN);
 app.get('/metrics', (req, res) => {
   const { getMetrics } = require('./socketManager');
   const metrics = getMetrics ? getMetrics() : {};
-  
+
   // Prometheus-style text format
   const lines = [
     '# HELP desklink_active_sessions Number of active remote sessions',
@@ -70,7 +141,7 @@ app.get('/metrics', (req, res) => {
     '# TYPE desklink_datachannel_msgs_total counter',
     `desklink_datachannel_msgs_total ${metrics.datachannelMsgs || 0}`,
   ];
-  
+
   res.set('Content-Type', 'text/plain; version=0.0.4');
   res.send(lines.join('\n'));
 });

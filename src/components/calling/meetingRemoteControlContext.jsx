@@ -122,8 +122,9 @@ export function MeetingRemoteControlProvider({ children }) {
   // For in-meeting remote access we intentionally do NOT send fromDeviceId. The backend
   // will resolve the caller's active deviceId based on the authenticated user.
   const requestControlForUser = useCallback(
-    async ({ targetUserId, targetName }) => {
-      if (!token || !user) {
+    async ({ targetUserId, targetName, senderAuthId }) => {
+      // Relaxed auth check: allow if we have a token OR if we have senderAuthId (anonymous)
+      if (!token && !senderAuthId) {
         console.warn('[MeetingRemoteControl] Missing auth context for requestControlForUser');
         return;
       }
@@ -132,7 +133,7 @@ export function MeetingRemoteControlProvider({ children }) {
         return;
       }
       try {
-        const { session } = await desklinkApi.requestMeetingRemote(token, targetUserId);
+        const { session } = await desklinkApi.requestMeetingRemote(token, targetUserId, senderAuthId);
         setPendingSession({
           sessionId: session.sessionId,
           targetUserId,
@@ -143,7 +144,7 @@ export function MeetingRemoteControlProvider({ children }) {
         console.error('[MeetingRemoteControl] requestControlForUser failed', err);
       }
     },
-    [token, user]
+    [token] // Removed 'user' dependency as we might use senderAuthId
   );
 
   // Owner: accept/reject incoming request inside meeting
@@ -184,7 +185,7 @@ export function MeetingRemoteControlProvider({ children }) {
 
   // Handle desklink-session-start -> start WebRTC as caller when we are the controller
   useEffect(() => {
-    if (!socket || !token || !user) return;
+    if (!socket) return;
 
     const handleSessionStart = async (payload) => {
       try {
@@ -194,7 +195,7 @@ export function MeetingRemoteControlProvider({ children }) {
           return;
         }
 
-        const effectiveUserId = user._id || user.id;
+        const effectiveUserId = user ? (user._id || user.id) : 'anon-caller';
         const config = {
           sessionId: payload.sessionId,
           authToken: token,

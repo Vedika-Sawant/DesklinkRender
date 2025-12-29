@@ -55,7 +55,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
   const connectionRetryCountRef = useRef(new Map());
   // Buffer incoming ICE candidates per peer until we have a remote description
   const pendingRemoteIceByPeerRef = useRef(new Map()); // Map<userId, RTCIceCandidateInit[]>
-  
+
   // Store ICE servers in a ref so it's available synchronously
   const iceServersRef = useRef(null);
   const iceServersFetchedRef = useRef(false);
@@ -69,21 +69,21 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
         // NOTE: VITE_API already includes the `/api` prefix (e.g. http://localhost:5000/api),
         // so we append only `/remote/turn-token` here to avoid double `/api/api/...` bugs.
         const apiUrl = import.meta.env.VITE_API || 'http://localhost:5000/api';
-        
+
         console.log('🔍 [ICE] Fetching ICE servers from backend...');
         console.log('🔍 [ICE] API URL:', apiUrl);
         console.log('🔍 [ICE] Has token:', !!token);
-        
+
         const response = await fetch(`${apiUrl}/remote/turn-token`, {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         });
-        
+
         console.log('🔍 [ICE] Response status:', response.status);
-        
+
         if (response.ok) {
           const data = await response.json();
           console.log('🔍 [ICE] Response data:', data);
-          
+
           if (data.iceServers && data.iceServers.length > 0) {
             console.log('✅ [ICE] Fetched', data.iceServers.length, 'ICE servers from backend');
             console.log('✅ [ICE] Servers:', JSON.stringify(data.iceServers, null, 2));
@@ -98,7 +98,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
           const text = await response.text();
           console.warn('⚠️ [ICE] Response body:', text);
         }
-        
+
         console.warn('⚠️ [ICE] Using default TURN servers as fallback');
         iceServersRef.current = DEFAULT_ICE_SERVERS;
         iceServersFetchedRef.current = true;
@@ -110,7 +110,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
         iceServersFetchedRef.current = true;
       }
     };
-    
+
     fetchIceServers();
   }, []);
 
@@ -152,12 +152,12 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
 
   const handleMeetingEnded = useCallback(({ roomId: endedRoomId, endedBy, endedByName, message }) => {
     console.log(`Meeting ended by host ${endedByName || endedBy} in room ${endedRoomId}`);
-    
+
     setMeetingEndedBy(endedByName || 'Host');
     setMeetingEnded(true);
-    
+
     leaveRoom();
-    
+
     if (onLeave) {
       setTimeout(() => {
         onLeave();
@@ -175,7 +175,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
 
       // CRITICAL: Use the ref instead of state
       const iceServers = iceServersRef.current;
-      
+
       if (!iceServers) {
         console.error('❌ [PEER] ICE servers not loaded yet!');
         console.error('❌ [PEER] iceServersFetchedRef.current:', iceServersFetchedRef.current);
@@ -199,16 +199,16 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
       }
 
       console.log(`🔧 [PEER] Creating peer connection to ${targetUserId} with ${iceServers.length} ICE servers`);
-      console.log(`🔧 [PEER] ICE servers:`, iceServers.map(s => ({ 
-        urls: s.urls, 
-        hasCredentials: !!(s.username && s.credential) 
+      console.log(`🔧 [PEER] ICE servers:`, iceServers.map(s => ({
+        urls: s.urls,
+        hasCredentials: !!(s.username && s.credential)
       })));
 
       const pc = new RTCPeerConnection({
         iceServers,
         iceCandidatePoolSize: 10,
       });
-      
+
       signalingStatesRef.current.set(targetUserId, 'stable');
 
       if (localStreamRef.current) {
@@ -278,7 +278,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
           const parts = event.candidate.candidate.split(' ');
           const type = parts[7];
           console.log(`📡 [ICE] Candidate [${type}] for ${targetUserId}:`, event.candidate.candidate);
-          
+
           if (type === 'relay') {
             console.log('✅ [ICE] TURN RELAY CANDIDATE GENERATED - Cross-network will work!');
           } else if (type === 'srflx') {
@@ -286,7 +286,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
           } else if (type === 'host') {
             console.log('📡 [ICE] Host candidate (local network)');
           }
-          
+
           if (socketRef.current) {
             socketRef.current.emit('ice-candidate', {
               roomId,
@@ -305,18 +305,18 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
 
       pc.oniceconnectionstatechange = () => {
         console.log(`🔌 [ICE] ICE connection state [${targetUserId}]: ${pc.iceConnectionState}`);
-        
+
         if (pc.iceConnectionState === 'connected') {
           console.log(`✅ [ICE] ICE CONNECTED to ${targetUserId}!`);
           connectionRetryCountRef.current.set(targetUserId, 0);
         }
-        
+
         if (pc.iceConnectionState === 'failed') {
           console.error(`❌ [ICE] ICE connection FAILED for ${targetUserId}`);
           console.error(`❌ [ICE] Attempting ICE restart...`);
           pc.restartIce();
         }
-        
+
         if (pc.iceConnectionState === 'checking') {
           console.log(`🔄 [ICE] Checking connectivity to ${targetUserId}...`);
         }
@@ -326,11 +326,11 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
         const state = pc.signalingState;
         signalingStatesRef.current.set(targetUserId, state);
         console.log(`📞 [SIGNAL] Signaling state for ${targetUserId}: ${state}`);
-        
+
         if (state === 'stable') {
           pendingOffersRef.current.delete(targetUserId);
         }
-        
+
         if (state === 'closed') {
           const streams = remoteStreamsRef.current.get(targetUserId);
           if (streams) {
@@ -345,26 +345,26 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
 
       pc.onconnectionstatechange = () => {
         console.log(`🌐 [PEER] Connection state [${targetUserId}]: ${pc.connectionState}`);
-        
+
         if (pc.connectionState === 'connected') {
           console.log(`✅✅✅ [PEER] SUCCESSFULLY CONNECTED to ${targetUserId}!`);
           connectionRetryCountRef.current.set(targetUserId, 0);
         }
-        
+
         if (pc.connectionState === 'failed') {
           console.error(`❌ [PEER] Connection FAILED to ${targetUserId}`);
           const retryCount = connectionRetryCountRef.current.get(targetUserId) || 0;
-          
+
           if (retryCount < 3 && !meetingEndedRef.current) {
             console.warn(`⚠️ [PEER] Retrying connection (${retryCount + 1}/3)...`);
             connectionRetryCountRef.current.set(targetUserId, retryCount + 1);
-            
+
             pc.close();
             peerConnectionsRef.current.delete(targetUserId);
             remoteStreamsRef.current.delete(targetUserId);
             signalingStatesRef.current.delete(targetUserId);
             pendingOffersRef.current.delete(targetUserId);
-            
+
             setTimeout(() => {
               if (!meetingEndedRef.current && socketRef.current && iceServersRef.current) {
                 console.log(`🔄 [PEER] Creating new connection attempt to ${targetUserId}...`);
@@ -394,7 +394,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
             console.error(`   2. TURN server not reachable`);
             console.error(`   3. Firewall blocking all WebRTC traffic`);
           }
-          
+
           const streams = remoteStreamsRef.current.get(targetUserId);
           if (streams) {
             streams.videoStream.getTracks().forEach((t) => t.stop());
@@ -404,11 +404,11 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
           signalingStatesRef.current.delete(targetUserId);
           pendingOffersRef.current.delete(targetUserId);
         }
-        
+
         if (pc.connectionState === 'connecting') {
           console.log(`🔄 [PEER] Connecting to ${targetUserId}...`);
         }
-        
+
         if (pc.connectionState === 'disconnected') {
           console.warn(`⚠️ [PEER] Disconnected from ${targetUserId}`);
         }
@@ -439,12 +439,12 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
             return prev.map((p) =>
               p.id === userId
                 ? {
-                    ...p,
-                    videoStream: stream,
-                    audioStream: stream,
-                    isAudioEnabled,
-                    isVideoEnabled,
-                  }
+                  ...p,
+                  videoStream: stream,
+                  audioStream: stream,
+                  isAudioEnabled,
+                  isVideoEnabled,
+                }
                 : p
             );
           }
@@ -520,7 +520,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
       }
 
       console.log('[ROOM] room-users payload:', users);
-      
+
       // Wait for ICE servers if not loaded yet
       if (!iceServersRef.current && !iceServersFetchedRef.current) {
         console.warn('[ROOM] ICE servers not loaded yet, waiting...');
@@ -537,7 +537,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
           iceServersRef.current = DEFAULT_ICE_SERVERS;
         }
       }
-      
+
       for (const user of users) {
         if (user.userId !== userId) {
           setParticipants((prev) => {
@@ -707,7 +707,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
       }
 
       console.log(`[SIGNAL] Received offer from ${from}`);
-      
+
       // Wait for ICE servers if not loaded yet
       if (!iceServersRef.current) {
         console.warn('[SIGNAL] ICE servers not loaded, waiting...');
@@ -742,7 +742,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
             remoteStreamsRef.current.delete(from);
             signalingStatesRef.current.delete(from);
             pendingOffersRef.current.delete(from);
-            
+
             pc = createPeerConnection(from);
             if (!pc) return;
           }
@@ -783,7 +783,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
           remoteStreamsRef.current.delete(from);
           signalingStatesRef.current.delete(from);
           pendingOffersRef.current.delete(from);
-          
+
           try {
             const newPc = createPeerConnection(from);
             if (newPc) {
@@ -804,7 +804,7 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
 
               const answer = await newPc.createAnswer();
               await newPc.setLocalDescription(answer);
-              
+
               if (socketRef.current) {
                 socketRef.current.emit('answer', {
                   roomId,
@@ -836,6 +836,14 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
     }
 
     const currentState = pc.signalingState;
+
+    // START FIX: Suppress warning for duplicate answers in stable state
+    if (currentState === 'stable') {
+      console.log(`[SIGNAL] Ignoring redundant answer from ${from} - connection already stable`);
+      return;
+    }
+    // END FIX
+
     if (currentState !== 'have-local-offer') {
       console.warn(`[SIGNAL] Ignoring answer from ${from} - connection in ${currentState} state`);
       return;
@@ -1019,8 +1027,8 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
         typeof micLocked === 'boolean'
           ? micLocked
           : allowUnmute != null
-          ? !allowUnmute
-          : false;
+            ? !allowUnmute
+            : false;
       setHostMicLocked(locked);
     },
     [roomId]
@@ -1033,8 +1041,8 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
         typeof cameraLocked === 'boolean'
           ? cameraLocked
           : allowCamera != null
-          ? !allowCamera
-          : false;
+            ? !allowCamera
+            : false;
       setHostCameraLocked(locked);
     },
     [roomId]
