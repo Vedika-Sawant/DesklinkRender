@@ -65,16 +65,19 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
     const fetchIceServers = async () => {
       try {
         const token = localStorage.getItem('token') || localStorage.getItem('vd_auth_token');
-        // Use the same API base as DeskLink (local-first), override via VITE_API if needed.
-        // NOTE: VITE_API already includes the `/api` prefix (e.g. http://localhost:5000/api),
-        // so we append only `/remote/turn-token` here to avoid double `/api/api/...` bugs.
-        const apiUrl = import.meta.env.VITE_API || 'http://localhost:5000/api';
+        // Fix: Ensure VITE_API has no trailing slash and append /api if missing (unless it's already there)
+        let baseUrl = (import.meta.env.VITE_API || 'http://localhost:5000/api').replace(/\/$/, '');
+
+        // If the base URL doesn't end with /api, append it because backend serves routes at /api/remote...
+        if (!baseUrl.endsWith('/api')) {
+          baseUrl += '/api';
+        }
 
         console.log('🔍 [ICE] Fetching ICE servers from backend...');
-        console.log('🔍 [ICE] API URL:', apiUrl);
+        console.log('🔍 [ICE] API Base URL:', baseUrl);
         console.log('🔍 [ICE] Has token:', !!token);
 
-        const response = await fetch(`${apiUrl}/remote/turn-token`, {
+        const response = await fetch(`${baseUrl}/remote/turn-token`, {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         });
 
