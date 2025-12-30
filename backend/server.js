@@ -111,12 +111,20 @@ app.use('/api/contacts', contactsRoutes);
 app.use('/api/messages', messagingRoutes);
 app.use('/api/device', deviceRoutes);
 app.use('/api/contact-links', contactLinkRoutes);
-app.use('/api/remote', remoteRoutes);
 app.use('/api/agent', agentProvisionRoutes);
+// Note: remoteRoutes is mounted later to allow desklink module to register its overrides first if needed
 
 // Create HTTP server and attach Socket.IO
 const server = http.createServer(app);
-createSocketServer(server, CLIENT_ORIGIN);
+const io = createSocketServer(server, CLIENT_ORIGIN);
+
+// Initialize DeskLink Module (In-memory meeting logic)
+// This must come before remoteRoutes if we want it to handle specific paths like /meeting-request
+const initDesklink = require('./desklink-server');
+initDesklink(app, server, io);
+
+// Mount remote routes (DB-backed fallbacks and TURN token)
+app.use('/api/remote', remoteRoutes);
 
 // Metrics endpoint for observability
 app.get('/metrics', (req, res) => {

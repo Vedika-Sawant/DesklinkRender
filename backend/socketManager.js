@@ -74,8 +74,8 @@ async function validateSessionAccess(sessionId, userId) {
 
   // If a userId is provided, enforce that they are caller or receiver.
   if (userId &&
-      String(session.callerUserId) !== String(userId) &&
-      String(session.receiverUserId) !== String(userId)) {
+    String(session.callerUserId) !== String(userId) &&
+    String(session.receiverUserId) !== String(userId)) {
     return null;
   }
 
@@ -99,20 +99,29 @@ function createSocketServer(server, clientOrigin) {
   const roomPermissions = new Map(); // Map<roomId, { micLocked, cameraLocked, chatDisabled }>
   const roomChats = new Map(); // Map<roomId, Array<{ roomId, userId, userName, text, ts }>>
 
-  // Authenticate socket connections using JWT
+  // Authenticate socket connections using JWT (Permissive for guests)
   io.use(async (socket, next) => {
     try {
       const auth = socket.handshake.auth || {};
       const token = auth.token;
 
       if (!token) {
-        return next(new Error('Not authorized, no token'));
+        // Guest mode / Anonymous
+        socket.user = null;
+        socket.userId = `guest-${socket.id}`;
+        socket.userPhone = 'Guest';
+        return next();
       }
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const user = await User.findById(decoded.id).select('-password');
       if (!user) {
-        return next(new Error('Not authorized, user not found'));
+        // Token valid but user gone? Treat as guest or error? 
+        // For safety, let's treat as guest so we don't block connections abruptly
+        socket.user = null;
+        socket.userId = `guest-${socket.id}`;
+        socket.userPhone = 'Guest';
+        return next();
       }
 
       socket.user = user;
@@ -120,8 +129,12 @@ function createSocketServer(server, clientOrigin) {
       socket.userId = String(user._id);
       return next();
     } catch (err) {
-      console.error('[socket] auth error', err && err.message);
-      return next(new Error('Not authorized, token failed'));
+      console.warn('[socket] auth warning:', err && err.message);
+      // Allow connection even if token fails (client might just have expired token)
+      socket.user = null;
+      socket.userId = `guest-${socket.id}`;
+      socket.userPhone = 'Guest';
+      return next();
     }
   });
 
@@ -238,190 +251,190 @@ function createSocketServer(server, clientOrigin) {
      * =========================================================
      */
 
-   /**
- * Fixed WebRTC Signaling Section for socketManager.js
- * Replace the existing WebRTC signaling section with this
- */
+    /**
+  * Fixed WebRTC Signaling Section for socketManager.js
+  * Replace the existing WebRTC signaling section with this
+  */
 
-// WebRTC Offer
-socket.on('webrtc-offer', async ({ sessionId, fromUserId, fromDeviceId, toDeviceId, sdp, token }) => {
-  try {
-    console.log(`[webrtc-offer] Session: ${sessionId}, From: ${fromDeviceId} → To: ${toDeviceId}`);
-    
-    // Optional: validate ephemeral session token
-    if (token) {
+    // WebRTC Offer
+    socket.on('webrtc-offer', async ({ sessionId, fromUserId, fromDeviceId, toDeviceId, sdp, token }) => {
       try {
-        const decoded = verifySessionToken(token);
-        if (decoded.sessionId && decoded.sessionId !== sessionId) {
-          console.error('[webrtc-offer] session token mismatch');
+        console.log(`[webrtc-offer] Session: ${sessionId}, From: ${fromDeviceId} → To: ${toDeviceId}`);
+
+        // Optional: validate ephemeral session token
+        if (token) {
+          try {
+            const decoded = verifySessionToken(token);
+            if (decoded.sessionId && decoded.sessionId !== sessionId) {
+              console.error('[webrtc-offer] session token mismatch');
+              return;
+            }
+          } catch (e) {
+            console.warn('[webrtc-offer] token validation failed:', e.message);
+          }
+        }
+
+        // Validate session ownership
+        const session = await validateSessionAccess(sessionId, fromUserId);
+        if (!session) {
+          console.error('[webrtc-offer] invalid session or unauthorized', sessionId, fromUserId);
           return;
         }
-      } catch (e) {
-        console.warn('[webrtc-offer] token validation failed:', e.message);
+
+        if (session.status !== 'accepted' && session.status !== 'in-progress') {
+          console.warn('[webrtc-offer] session not in accepted/in-progress state', sessionId, session.status);
+        }
+
+        metrics.offersRelayed++;
+
+        // ✅ FIX: Pass ALL fields including toDeviceId and token
+        const payload = {
+          sessionId,
+          fromUserId,
+          fromDeviceId,
+          toDeviceId,
+          sdp,
+          token,
+        };
+
+        console.log(`[webrtc-offer] Relaying to device ${toDeviceId}:`, payload);
+
+        // Relay to target device
+        emitToDevice(toDeviceId, 'webrtc-offer', payload);
+
+        // If target offline, queue for later
+        if (!onlineDevicesById.has(String(toDeviceId))) {
+          console.warn(`[webrtc-offer] Device ${toDeviceId} offline, queuing signal`);
+          queueSignal(toDeviceId, 'webrtc-offer', payload);
+        } else {
+          console.log(`[webrtc-offer] Device ${toDeviceId} is ONLINE, signal sent immediately`);
+        }
+      } catch (err) {
+        console.error('[webrtc-offer] error:', err && err.message);
       }
-    }
+    });
 
-    // Validate session ownership
-    const session = await validateSessionAccess(sessionId, fromUserId);
-    if (!session) {
-      console.error('[webrtc-offer] invalid session or unauthorized', sessionId, fromUserId);
-      return;
-    }
-
-    if (session.status !== 'accepted' && session.status !== 'in-progress') {
-      console.warn('[webrtc-offer] session not in accepted/in-progress state', sessionId, session.status);
-    }
-
-    metrics.offersRelayed++;
-
-    // ✅ FIX: Pass ALL fields including toDeviceId and token
-    const payload = {
-      sessionId,
-      fromUserId,
-      fromDeviceId,
-      toDeviceId,
-      sdp,
-      token,
-    };
-
-    console.log(`[webrtc-offer] Relaying to device ${toDeviceId}:`, payload);
-
-    // Relay to target device
-    emitToDevice(toDeviceId, 'webrtc-offer', payload);
-
-    // If target offline, queue for later
-    if (!onlineDevicesById.has(String(toDeviceId))) {
-      console.warn(`[webrtc-offer] Device ${toDeviceId} offline, queuing signal`);
-      queueSignal(toDeviceId, 'webrtc-offer', payload);
-    } else {
-      console.log(`[webrtc-offer] Device ${toDeviceId} is ONLINE, signal sent immediately`);
-    }
-  } catch (err) {
-    console.error('[webrtc-offer] error:', err && err.message);
-  }
-});
-
-// WebRTC Answer
-socket.on('webrtc-answer', async ({ sessionId, fromUserId, fromDeviceId, toDeviceId, sdp, token }) => {
-  try {
-    console.log(`[webrtc-answer] Session: ${sessionId}, From: ${fromDeviceId} → To: ${toDeviceId}`);
-    
-    if (token) {
+    // WebRTC Answer
+    socket.on('webrtc-answer', async ({ sessionId, fromUserId, fromDeviceId, toDeviceId, sdp, token }) => {
       try {
-        const decoded = verifySessionToken(token);
-        if (decoded.sessionId && decoded.sessionId !== sessionId) {
-          console.error('[webrtc-answer] session token mismatch');
+        console.log(`[webrtc-answer] Session: ${sessionId}, From: ${fromDeviceId} → To: ${toDeviceId}`);
+
+        if (token) {
+          try {
+            const decoded = verifySessionToken(token);
+            if (decoded.sessionId && decoded.sessionId !== sessionId) {
+              console.error('[webrtc-answer] session token mismatch');
+              return;
+            }
+          } catch (e) {
+            console.warn('[webrtc-answer] token validation failed:', e.message);
+          }
+        }
+
+        const session = await validateSessionAccess(sessionId, fromUserId);
+        if (!session) {
+          console.error('[webrtc-answer] invalid session or unauthorized', sessionId, fromUserId);
           return;
         }
-      } catch (e) {
-        console.warn('[webrtc-answer] token validation failed:', e.message);
+
+        // ✅ FIX: Pass ALL fields including toDeviceId and token
+        const payload = {
+          sessionId,
+          fromUserId,
+          fromDeviceId,
+          toDeviceId,
+          sdp,
+          token,
+        };
+
+        console.log(`[webrtc-answer] Relaying to device ${toDeviceId}:`, payload);
+
+        emitToDevice(toDeviceId, 'webrtc-answer', payload);
+
+        if (!onlineDevicesById.has(String(toDeviceId))) {
+          console.warn(`[webrtc-answer] Device ${toDeviceId} offline, queuing signal`);
+          queueSignal(toDeviceId, 'webrtc-answer', payload);
+        } else {
+          console.log(`[webrtc-answer] Device ${toDeviceId} is ONLINE, signal sent immediately`);
+        }
+      } catch (err) {
+        console.error('[webrtc-answer] error:', err && err.message);
       }
-    }
+    });
 
-    const session = await validateSessionAccess(sessionId, fromUserId);
-    if (!session) {
-      console.error('[webrtc-answer] invalid session or unauthorized', sessionId, fromUserId);
-      return;
-    }
-
-    // ✅ FIX: Pass ALL fields including toDeviceId and token
-    const payload = {
-      sessionId,
-      fromUserId,
-      fromDeviceId,
-      toDeviceId,
-      sdp,
-      token,
-    };
-
-    console.log(`[webrtc-answer] Relaying to device ${toDeviceId}:`, payload);
-
-    emitToDevice(toDeviceId, 'webrtc-answer', payload);
-
-    if (!onlineDevicesById.has(String(toDeviceId))) {
-      console.warn(`[webrtc-answer] Device ${toDeviceId} offline, queuing signal`);
-      queueSignal(toDeviceId, 'webrtc-answer', payload);
-    } else {
-      console.log(`[webrtc-answer] Device ${toDeviceId} is ONLINE, signal sent immediately`);
-    }
-  } catch (err) {
-    console.error('[webrtc-answer] error:', err && err.message);
-  }
-});
-
-// WebRTC ICE Candidate
-socket.on('webrtc-ice', async ({ sessionId, fromUserId, fromDeviceId, toDeviceId, candidate, token }) => {
-  try {
-    // Don't log every ICE candidate (too verbose), just count them
-    if (token) {
+    // WebRTC ICE Candidate
+    socket.on('webrtc-ice', async ({ sessionId, fromUserId, fromDeviceId, toDeviceId, candidate, token }) => {
       try {
-        const decoded = verifySessionToken(token);
-        if (decoded.sessionId && decoded.sessionId !== sessionId) {
+        // Don't log every ICE candidate (too verbose), just count them
+        if (token) {
+          try {
+            const decoded = verifySessionToken(token);
+            if (decoded.sessionId && decoded.sessionId !== sessionId) {
+              return;
+            }
+          } catch (e) {
+            // Silent fail for ICE candidates
+          }
+        }
+
+        const session = await validateSessionAccess(sessionId, fromUserId);
+        if (!session) {
+          metrics.iceFailures++;
           return;
         }
-      } catch (e) {
-        // Silent fail for ICE candidates
+
+        // ✅ FIX: Pass ALL fields including toDeviceId and token
+        const payload = {
+          sessionId,
+          fromUserId,
+          fromDeviceId,
+          toDeviceId,
+          candidate,
+          token,
+        };
+
+        // Relay candidate
+        emitToDevice(toDeviceId, 'webrtc-ice', payload);
+
+        if (!onlineDevicesById.has(String(toDeviceId))) {
+          queueSignal(toDeviceId, 'webrtc-ice', payload);
+        }
+      } catch (err) {
+        console.error('[webrtc-ice] error:', err && err.message);
+        metrics.iceFailures++;
       }
-    }
+    });
 
-    const session = await validateSessionAccess(sessionId, fromUserId);
-    if (!session) {
-      metrics.iceFailures++;
-      return;
-    }
+    // WebRTC Cancel
+    socket.on('webrtc-cancel', async ({ sessionId, fromUserId }) => {
+      try {
+        const session = await validateSessionAccess(sessionId, fromUserId);
+        if (!session) return;
 
-    // ✅ FIX: Pass ALL fields including toDeviceId and token
-    const payload = {
-      sessionId,
-      fromUserId,
-      fromDeviceId,
-      toDeviceId,
-      candidate,
-      token,
-    };
+        console.log(`[webrtc-cancel] ${sessionId} from ${fromUserId}`);
 
-    // Relay candidate
-    emitToDevice(toDeviceId, 'webrtc-ice', payload);
+        // ✅ Emit to both caller and receiver users
+        emitToUser(session.callerUserId, 'webrtc-cancel', { sessionId });
+        emitToUser(session.receiverUserId, 'webrtc-cancel', { sessionId });
 
-    if (!onlineDevicesById.has(String(toDeviceId))) {
-      queueSignal(toDeviceId, 'webrtc-ice', payload);
-    }
-  } catch (err) {
-    console.error('[webrtc-ice] error:', err && err.message);
-    metrics.iceFailures++;
-  }
-});
+        // ✅ Also emit to devices
+        if (session.callerDeviceId) {
+          emitToDevice(session.callerDeviceId, 'webrtc-cancel', { sessionId });
+        }
+        if (session.receiverDeviceId) {
+          emitToDevice(session.receiverDeviceId, 'webrtc-cancel', { sessionId });
+        }
 
-// WebRTC Cancel
-socket.on('webrtc-cancel', async ({ sessionId, fromUserId }) => {
-  try {
-    const session = await validateSessionAccess(sessionId, fromUserId);
-    if (!session) return;
+        session.status = 'ended';
+        session.endedAt = new Date();
+        session.audit.push({ event: 'cancelled', userId: fromUserId, details: {} });
+        await session.save();
 
-    console.log(`[webrtc-cancel] ${sessionId} from ${fromUserId}`);
-
-    // ✅ Emit to both caller and receiver users
-    emitToUser(session.callerUserId, 'webrtc-cancel', { sessionId });
-    emitToUser(session.receiverUserId, 'webrtc-cancel', { sessionId });
-
-    // ✅ Also emit to devices
-    if (session.callerDeviceId) {
-      emitToDevice(session.callerDeviceId, 'webrtc-cancel', { sessionId });
-    }
-    if (session.receiverDeviceId) {
-      emitToDevice(session.receiverDeviceId, 'webrtc-cancel', { sessionId });
-    }
-
-    session.status = 'ended';
-    session.endedAt = new Date();
-    session.audit.push({ event: 'cancelled', userId: fromUserId, details: {} });
-    await session.save();
-
-    if (metrics.activeSessions > 0) metrics.activeSessions--;
-  } catch (err) {
-    console.error('[webrtc-cancel] error:', err && err.message);
-  }
-});
+        if (metrics.activeSessions > 0) metrics.activeSessions--;
+      } catch (err) {
+        console.error('[webrtc-cancel] error:', err && err.message);
+      }
+    });
 
     /**
      * =========================================================
