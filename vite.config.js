@@ -13,6 +13,18 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/socket.io': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        ws: true,
+      },
+    },
     allowedHosts: [
       '.trycloudflare.com', // allow all cloudflared links
       '.cfargotunnel.com',  // alternate domain cloudflared uses
