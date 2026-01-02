@@ -18,6 +18,9 @@ const onlineUsersById = new Map();
 // Map<deviceId, Set<socketId>>
 const onlineDevicesById = new Map();
 
+const Device = require('./models/Device'); // Import Device model for persistent ID lookup
+
+
 let ioInstance = null;
 
 // ---------------------------------------------------------------------------
@@ -139,7 +142,7 @@ function initDesklink(app, server, io) {
   });
 
   // /api/remote/meeting-request
-  app.post('/api/remote/meeting-request', (req, res) => {
+  app.post('/api/remote/meeting-request', async (req, res) => {
     const { userId, name } = getAuthContextFromReq(req);
     const { toUserId } = req.body || {};
 
@@ -149,10 +152,37 @@ function initDesklink(app, server, io) {
 
     const sessionId = generateSessionId();
 
-    const controllerDeviceId =
-      (req.headers['x-device-id'] && String(req.headers['x-device-id'])) ||
-      (req.headers['x-controller-device-id'] && String(req.headers['x-controller-device-id'])) ||
-      `web-${userId}`;
+    // Resolve device ID: Prefer registered Agent Device > Header > Web fallback
+    let controllerDeviceId = null;
+
+    // 1. Check if specific device requested in headers
+    if (req.headers['x-device-id']) controllerDeviceId = String(req.headers['x-device-id']);
+    else if (req.headers['x-controller-device-id']) controllerDeviceId = String(req.headers['x-controller-device-id']);
+
+    // 2. Look up the user's registered agent device from MongoDB
+    if (!controllerDeviceId) {
+      try {
+        const device = await Device.findOne({
+          userId: userId,
+          blocked: false,
+          deleted: false
+        }).sort({ lastOnline: -1 }); // Get most recently online device
+
+        if (device) {
+          controllerDeviceId = device.deviceId;
+          console.log(`[desklink] Resolved deviceId for user ${userId} -> ${controllerDeviceId}`);
+        } else {
+          console.log(`[desklink] No registered device found for user ${userId}, falling back to web ID.`);
+        }
+      } catch (err) {
+        console.error('[desklink] Error looking up device:', err);
+      }
+    }
+
+    // 3. Fallback to web ID (Signaling only, no control)
+    if (!controllerDeviceId) {
+      controllerDeviceId = `web-${userId}`;
+    }
 
     const session = {
       sessionId,

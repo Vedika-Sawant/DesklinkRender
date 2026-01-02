@@ -25,7 +25,7 @@ export default function MeetDashboard() {
     try {
       // Generate unique room ID (UUID)
       const roomId = crypto.randomUUID();
-      
+
       setMeetingState({
         roomId,
         userName: 'You',
@@ -34,7 +34,7 @@ export default function MeetDashboard() {
         initialAudioEnabled: previewData.isAudioEnabled,
         initialVideoEnabled: previewData.isVideoEnabled,
       });
-      
+
       setShowNewMeetingPreview(false);
     } catch (error) {
       console.error('Error starting meeting:', error);
@@ -74,7 +74,7 @@ export default function MeetDashboard() {
         initialAudioEnabled: !joinData.dontConnectAudio,
         initialVideoEnabled: !joinData.turnOffVideo,
       });
-      
+
       setShowJoinModal(false);
     } catch (error) {
       console.error('Error joining meeting:', error);
@@ -148,6 +148,28 @@ export default function MeetDashboard() {
                   <NewMeetingButton onClick={onCreateMeeting} />
                   <JoinMeetingButton onClick={onJoinMeeting} />
                 </div>
+
+                {/* Remote Access Agent Download */}
+                <div className="mt-8 flex flex-col items-center gap-3">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Remote Access Setup</p>
+                  <a
+                    href={`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/agent/download`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/50 px-6 py-3 text-sm font-medium text-slate-300 transition-all hover:border-amber-500/50 hover:bg-slate-800/80 hover:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  >
+                    <svg className="h-5 w-5 text-slate-400 transition-colors group-hover:text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Enable Remote Control (Install Agent)
+                    <svg className="h-4 w-4 ml-1 opacity-50 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                  </a>
+                  <p className="text-[10px] text-slate-500 max-w-xs text-center">
+                    Required for full remote control. Install once on your device.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -161,7 +183,7 @@ export default function MeetDashboard() {
           onStart={handleStartMeeting}
         />
       )}
-      
+
       {showJoinModal && (
         <JoinMeeting
           onClose={() => setShowJoinModal(false)}
