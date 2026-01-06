@@ -24,6 +24,10 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      '/downloads': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
     },
     allowedHosts: [
       '.trycloudflare.com', // allow all cloudflared links

@@ -104,6 +104,9 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(express.json());
+// Serve static files from public/downloads directory
+const path = require('path');
+app.use('/downloads', express.static(path.join(__dirname, 'public/downloads')));
 
 // Mount routes
 app.use('/api/auth', authRoutes);

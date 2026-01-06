@@ -153,7 +153,7 @@ export default function MeetDashboard() {
                 <div className="mt-8 flex flex-col items-center gap-3">
                   <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Remote Access Setup</p>
                   <a
-                    href="/api/agent/download"
+                    href="/downloads/DeskLinkAgent.exe"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="group flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/50 px-6 py-3 text-sm font-medium text-slate-300 transition-all hover:border-amber-500/50 hover:bg-slate-800/80 hover:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
