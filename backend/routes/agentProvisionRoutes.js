@@ -9,7 +9,7 @@ router.post('/provision', provisionAgentToken);
 router.get('/download', (req, res) => {
     const path = require('path');
     const fs = require('fs');
-    const filePath = path.join(__dirname, '../../public/downloads/DeskLinkAgent.exe');
+    const filePath = path.join(__dirname, '../public/downloads/DeskLinkAgent.exe');
 
     if (fs.existsSync(filePath)) {
         res.download(filePath, 'DeskLinkAgent.exe');

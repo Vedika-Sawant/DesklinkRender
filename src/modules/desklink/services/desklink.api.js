@@ -1,4 +1,11 @@
-const API_BASE = import.meta.env.VITE_API || 'http://localhost:5000/api';
+const getApiBase = () => {
+  let url = import.meta.env.VITE_API || 'http://localhost:5000/api';
+  if (!url.endsWith('/api')) {
+    url = `${url.replace(/\/+$/, '')}/api`;
+  }
+  return url;
+};
+const API_BASE = getApiBase();
 
 const parseJSON = async (res) => {
   const data = await res.json().catch(() => ({}));
