@@ -39,14 +39,13 @@
             Console.WriteLine($"[DeskLinkAgent] Device ID: {_config.DeviceId}");
 
             // 3. Hardcoded Server URL (Production/Render)
-            // Ideally this comes from a build config, but for this task we hardcode the target.
             if (string.IsNullOrWhiteSpace(_config.ServerUrl))
             {
-                _config.ServerUrl = "https://desklinkrender5.onrender.com";
+                _config.ServerUrl = "https://anydesk.onrender.com";
                 DeviceIdProvider.SaveConfig(_config);
             }
-            // Force override to ensure we use the correct one if user has old local config
-            // _config.ServerUrl = "https://desklinkrender5.onrender.com"; 
+            // Force override to ensure we use the correct one in production
+            _config.ServerUrl = "https://anydesk.onrender.com"; 
             
             Console.WriteLine($"[DeskLinkAgent] Server URL: {_config.ServerUrl}");
 
