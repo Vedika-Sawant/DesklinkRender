@@ -12,6 +12,8 @@ public class LocalApiServer
     private readonly Webserver _server;
 
     public const int Port = 17600;
+    
+    public event Func<string, Task>? OnProvisioned;
 
     public LocalApiServer(string deviceId)
     {
@@ -46,6 +48,44 @@ public class LocalApiServer
             ctx.Response.StatusCode = 200;
             ctx.Response.ContentType = "application/json";
             await ctx.Response.Send(payload);
+        });
+
+        _server.Routes.PreAuthentication.Static.Add(HttpMethod.POST, "/provision", async (HttpContextBase ctx) =>
+        {
+             try
+            {
+                using var reader = new StreamReader(ctx.Request.Data);
+                var body = await reader.ReadToEndAsync();
+                var json = JsonSerializer.Deserialize<JsonElement>(body);
+                
+                if (json.TryGetProperty("token", out var tokenProp))
+                {
+                    var token = tokenProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(token))
+                    {
+                        Console.WriteLine("[LocalApi] Provision token received.");
+                        
+                        // Fire and forget the provisioning task so we don't block the HTTP response too long
+                        _ = Task.Run(async () => 
+                        {
+                            if (OnProvisioned != null) await OnProvisioned.Invoke(token);
+                        });
+
+                        ctx.Response.StatusCode = 200;
+                        await ctx.Response.Send("OK");
+                        return;
+                    }
+                }
+                
+                ctx.Response.StatusCode = 400;
+                await ctx.Response.Send("Missing token");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("[LocalApi] Provision error: " + ex);
+                ctx.Response.StatusCode = 500;
+                await ctx.Response.Send("Error");
+            }
         });
 
         _server.Routes.PreAuthentication.Static.Add(HttpMethod.POST, "/remote/start", async (HttpContextBase ctx) =>

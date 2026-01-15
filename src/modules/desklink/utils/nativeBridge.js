@@ -48,12 +48,61 @@ export function startRemoteClientSession({ sessionId, receiverDeviceId }) {
   }
 }
 
+
 export function startRemoteHostSession({ sessionId, callerDeviceId }) {
   if (window?.deskLinkAgent?.startHostSession) {
     window.deskLinkAgent.startHostSession({ sessionId, callerDeviceId });
   } else {
     console.info('[DeskLink] start host session', sessionId, callerDeviceId);
+    // Try to trigger via local API if native bridge is missing (browser mode)
+    // This is optional for part 1, but good to have
   }
 }
+
+// Zero-Config: Provision the local agent with our token
+export async function provisionNativeAgent(token) {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout
+        
+        const response = await fetch('http://127.0.0.1:17600/provision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+            console.log('[DeskLink] Agent provisioned successfully');
+            return true;
+        }
+    } catch (err) {
+        // console.debug('[DeskLink] Agent provision attempt failed (likely not installed yet)', err);
+    }
+    return false;
+}
+
+// Zero-Config: Check if agent is running and get ID
+export async function getLocalAgentId() {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1000);
+        
+        const response = await fetch('http://127.0.0.1:17600/device-id', { 
+            signal: controller.signal 
+        });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+            const data = await response.json();
+            return data.deviceId;
+        }
+    } catch (err) {
+        return null;
+    }
+    return null;
+}
+
 
 

@@ -291,7 +291,6 @@ C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgen
 C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\bin\Release\net8.0\win-x64\hostfxr.dll
 C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\bin\Release\net8.0\win-x64\hostpolicy.dll
 C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\bin\Release\net8.0\win-x64\mscordaccore.dll
-C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\bin\Release\net8.0\win-x64\mscordaccore_amd64_amd64_8.0.2225.52707.dll
 C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\bin\Release\net8.0\win-x64\mscordbi.dll
 C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\bin\Release\net8.0\win-x64\mscorrc.dll
 C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\bin\Release\net8.0\win-x64\msquic.dll
@@ -307,3 +306,4 @@ C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgen
 C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\obj\Release\net8.0\win-x64\DeskLinkAgent.pdb
 C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\obj\Release\net8.0\win-x64\DeskLinkAgent.genruntimeconfig.cache
 C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\obj\Release\net8.0\win-x64\ref\DeskLinkAgent.dll
+C:\Users\vedika sawant\OneDrive\Documents\VisionDesk2\Attempt2000th\DeskLinkAgent\bin\Release\net8.0\win-x64\mscordaccore_amd64_amd64_8.0.2325.60607.dll

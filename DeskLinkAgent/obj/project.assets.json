@@ -114,7 +114,7 @@
           "buildTransitive/net6.0/_._": {}
         }
       },
-      "Microsoft.NET.ILLink.Tasks/8.0.22": {
+      "Microsoft.NET.ILLink.Tasks/8.0.23": {
         "type": "package",
         "build": {
           "build/Microsoft.NET.ILLink.Tasks.props": {}
@@ -1756,7 +1756,7 @@
           "buildTransitive/net6.0/_._": {}
         }
       },
-      "Microsoft.NET.ILLink.Tasks/8.0.22": {
+      "Microsoft.NET.ILLink.Tasks/8.0.23": {
         "type": "package",
         "build": {
           "build/Microsoft.NET.ILLink.Tasks.props": {}
@@ -3724,10 +3724,10 @@
         "useSharedDesignerContext.txt"
       ]
     },
-    "Microsoft.NET.ILLink.Tasks/8.0.22": {
-      "sha512": "MhcMithKEiyyNkD2ZfbDZPmcOdi0GheGfg8saEIIEfD/fol3iHmcV8TsZkD4ZYz5gdUuoX4YtlVySUU7Sxl9SQ==",
+    "Microsoft.NET.ILLink.Tasks/8.0.23": {
+      "sha512": "GqHiB1HbbODWPbY/lc5xLQH8siEEhNA0ptpJCC6X6adtAYNEzu5ZlqV3YHA3Gh7fuEwgA8XqVwMtH2KNtuQM1Q==",
       "type": "package",
-      "path": "microsoft.net.illink.tasks/8.0.22",
+      "path": "microsoft.net.illink.tasks/8.0.23",
       "hasTools": true,
       "files": [
         ".nupkg.metadata",
@@ -3741,7 +3741,7 @@
         "build/Microsoft.NET.ILLink.Analyzers.props",
         "build/Microsoft.NET.ILLink.Tasks.props",
         "build/Microsoft.NET.ILLink.targets",
-        "microsoft.net.illink.tasks.8.0.22.nupkg.sha512",
+        "microsoft.net.illink.tasks.8.0.23.nupkg.sha512",
         "microsoft.net.illink.tasks.nuspec",
         "tools/net472/ILLink.Tasks.dll",
         "tools/net472/ILLink.Tasks.dll.config",
@@ -8169,7 +8169,7 @@
       "DotNetEnv >= 3.1.1",
       "Microsoft.Extensions.Configuration >= 8.0.0",
       "Microsoft.Extensions.Configuration.EnvironmentVariables >= 8.0.0",
-      "Microsoft.NET.ILLink.Tasks >= 8.0.22",
+      "Microsoft.NET.ILLink.Tasks >= 8.0.23",
       "SocketIOClient >= 3.1.2",
       "System.Management >= 7.0.2",
       "Watson >= 6.4.0"
@@ -8233,7 +8233,7 @@
           "Microsoft.NET.ILLink.Tasks": {
             "suppressParent": "All",
             "target": "Package",
-            "version": "[8.0.22, )",
+            "version": "[8.0.23, )",
             "autoReferenced": true
           },
           "SocketIOClient": {
@@ -8263,31 +8263,31 @@
         "downloadDependencies": [
           {
             "name": "Microsoft.AspNetCore.App.Ref",
-            "version": "[8.0.22, 8.0.22]"
+            "version": "[8.0.23, 8.0.23]"
           },
           {
             "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-            "version": "[8.0.22, 8.0.22]"
+            "version": "[8.0.23, 8.0.23]"
           },
           {
             "name": "Microsoft.NETCore.App.Host.win-x64",
-            "version": "[8.0.22, 8.0.22]"
+            "version": "[8.0.23, 8.0.23]"
           },
           {
             "name": "Microsoft.NETCore.App.Ref",
-            "version": "[8.0.22, 8.0.22]"
+            "version": "[8.0.23, 8.0.23]"
           },
           {
             "name": "Microsoft.NETCore.App.Runtime.win-x64",
-            "version": "[8.0.22, 8.0.22]"
+            "version": "[8.0.23, 8.0.23]"
           },
           {
             "name": "Microsoft.WindowsDesktop.App.Ref",
-            "version": "[8.0.22, 8.0.22]"
+            "version": "[8.0.23, 8.0.23]"
           },
           {
             "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-            "version": "[8.0.22, 8.0.22]"
+            "version": "[8.0.23, 8.0.23]"
           }
         ],
         "frameworkReferences": {
@@ -8295,7 +8295,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.101/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.102/PortableRuntimeIdentifierGraph.json"
       }
     },
     "runtimes": {

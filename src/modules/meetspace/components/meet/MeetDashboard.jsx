@@ -150,26 +150,7 @@ export default function MeetDashboard() {
                 </div>
 
                 {/* Remote Access Agent Download */}
-                <div className="mt-8 flex flex-col items-center gap-3">
-                  <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Remote Access Setup</p>
-                  <a
-                    href="/downloads/DeskLinkAgent.exe"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/50 px-6 py-3 text-sm font-medium text-slate-300 transition-all hover:border-amber-500/50 hover:bg-slate-800/80 hover:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                  >
-                    <svg className="h-5 w-5 text-slate-400 transition-colors group-hover:text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Enable Remote Control (Install Agent)
-                    <svg className="h-4 w-4 ml-1 opacity-50 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                  </a>
-                  <p className="text-[10px] text-slate-500 max-w-xs text-center">
-                    Required for full remote control. Install once on your device.
-                  </p>
-                </div>
+                <AgentDownloadSection />
               </div>
             </div>
           </div>
@@ -191,5 +172,91 @@ export default function MeetDashboard() {
         />
       )}
     </>
+  );
+}
+
+function AgentDownloadSection() {
+  const [status, setStatus] = React.useState('idle'); // idle, downloading, provisioning, success, error
+  // We need the token. Assuming useAuth is available or we can get it from localStorage for this zero-config flow
+  // In a real app we'd use useAuth context, but let's try reading from localStorage if useAuth isn't easily reachable here
+  // or just import it.
+
+  const handleDownload = async (e) => {
+    // e.preventDefault(); // Don't prevent default, let download happen
+    setStatus('downloading');
+
+    // Start provisioning loop
+    provision();
+  };
+
+  const provision = async () => {
+    setStatus('provisioning');
+    const { provisionNativeAgent } = await import('@/modules/desklink/utils/nativeBridge.js');
+
+    // Get token from storage (simpler than hooking up auth context if not present)
+    const token = localStorage.getItem('token');
+
+    if (!token) {
+      console.warn('No token found for provisioning');
+      setStatus('error');
+      return;
+    }
+
+    // Try for 60 seconds
+    let attempts = 0;
+    const maxAttempts = 30; // 30 * 2s = 60s
+
+    const loop = setInterval(async () => {
+      attempts++;
+      try {
+        const success = await provisionNativeAgent(token);
+        if (success) {
+          setStatus('success');
+          clearInterval(loop);
+          return;
+        }
+      } catch (err) { }
+
+      if (attempts >= maxAttempts) {
+        setStatus('timeout');
+        clearInterval(loop);
+      }
+    }, 2000);
+  };
+
+  return (
+    <div className="mt-8 flex flex-col items-center gap-3">
+      <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Remote Access Setup</p>
+
+      {status === 'success' ? (
+        <div className="flex items-center gap-3 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-6 py-3 text-sm font-medium text-emerald-400">
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          Agent Configured & Ready!
+        </div>
+      ) : (
+        <a
+          href="/downloads/DeskLinkAgent.exe"
+          onClick={handleDownload}
+          download="DeskLinkAgent.exe"
+          className="group flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/50 px-6 py-3 text-sm font-medium text-slate-300 transition-all hover:border-amber-500/50 hover:bg-slate-800/80 hover:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+        >
+          <svg className="h-5 w-5 text-slate-400 transition-colors group-hover:text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          {status === 'provisioning' ? 'Waiting for Agent...' : 'Enable Remote Control (Install Agent)'}
+          <svg className="h-4 w-4 ml-1 opacity-50 group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+        </a>
+      )}
+
+      <p className="text-[10px] text-slate-500 max-w-xs text-center">
+        {status === 'provisioning'
+          ? 'Installing... Please run the downloaded file.'
+          : 'Required for full remote control. Install once on your device.'}
+      </p>
+    </div>
   );
 }
