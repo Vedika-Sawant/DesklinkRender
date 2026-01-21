@@ -203,7 +203,53 @@ public class SocketClient : IAsyncDisposable
             StopWebRTC();
         });
 
+        if (!await ValidateServerConnection(serverUrl))
+        {
+            Console.Error.WriteLine("[Agent] Server validation failed. Aborting connection.");
+            return;
+        }
+
         await _client.ConnectAsync();
+    }
+
+    private async Task<bool> ValidateServerConnection(string serverUrl)
+    {
+        Console.WriteLine("[Agent] Validating server connection...");
+        try
+        {
+            using var http = new System.Net.Http.HttpClient();
+            http.Timeout = TimeSpan.FromSeconds(5);
+            var healthUrl = serverUrl.TrimEnd('/') + "/health";
+            
+            var response = await http.GetAsync(healthUrl);
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("[Agent] Server connection valid (Health Check OK).");
+                return true;
+            }
+            
+            Console.Error.WriteLine($"[Agent] Server health check failed. Status: {response.StatusCode}");
+            return false;
+        }
+        catch (System.Net.Http.HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"[Agent] Server connection failed: {ex.Message}");
+            if (ex.InnerException != null)
+            {
+                Console.Error.WriteLine($"[Agent] Inner error: {ex.InnerException.Message}");
+            }
+            return false;
+        }
+        catch (TaskCanceledException)
+        {
+            Console.Error.WriteLine("[Agent] Server connection timed out.");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Agent] Unexpected error validating server: {ex.Message}");
+            return false;
+        }
     }
 
     public async Task Emit(string eventName, object payload)

@@ -38,16 +38,24 @@
             }
             Console.WriteLine($"[DeskLinkAgent] Device ID: {_config.DeviceId}");
 
-            // 3. Hardcoded Server URL (Production/Render)
-            if (string.IsNullOrWhiteSpace(_config.ServerUrl))
+            // 3. Server URL Configuration
+            // Migration: Fix old/wrong URL if present
+            if (string.IsNullOrWhiteSpace(_config.ServerUrl) || _config.ServerUrl.Contains("anydesk.onrender.com"))
             {
                 _config.ServerUrl = "https://desklinkrender5.onrender.com";
                 DeviceIdProvider.SaveConfig(_config);
+                Console.WriteLine("[DeskLinkAgent] Migrated config to use correct Server URL.");
             }
-            // Force override to ensure we use the correct one in production
-            _config.ServerUrl = "https://desklinkrender5.onrender.com"; 
             
-            Console.WriteLine($"[DeskLinkAgent] Server URL: {_config.ServerUrl}");
+            // Allow environment variable override
+            var envUrl = Environment.GetEnvironmentVariable("DESKLINK_SERVER_URL");
+            if (!string.IsNullOrWhiteSpace(envUrl))
+            {
+                _config.ServerUrl = envUrl;
+                Console.WriteLine($"[DeskLinkAgent] Overriding Server URL from environment: {envUrl}");
+            }
+
+            Console.WriteLine($"[DeskLinkAgent] Server URL resolved to: {_config.ServerUrl}");
 
             // 4. Start local HTTP API & IPC
             _apiServer = new LocalApiServer(_config.DeviceId);
