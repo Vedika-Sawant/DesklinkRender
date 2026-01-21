@@ -41,11 +41,11 @@
             // 3. Hardcoded Server URL (Production/Render)
             if (string.IsNullOrWhiteSpace(_config.ServerUrl))
             {
-                _config.ServerUrl = "https://anydesk.onrender.com";
+                _config.ServerUrl = "https://desklinkrender5.onrender.com";
                 DeviceIdProvider.SaveConfig(_config);
             }
             // Force override to ensure we use the correct one in production
-            _config.ServerUrl = "https://anydesk.onrender.com"; 
+            _config.ServerUrl = "https://desklinkrender5.onrender.com"; 
             
             Console.WriteLine($"[DeskLinkAgent] Server URL: {_config.ServerUrl}");
 

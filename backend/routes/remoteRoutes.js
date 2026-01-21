@@ -37,11 +37,24 @@ router.post('/complete', protect, completeRemoteSession);
  * GET /api/remote/turn-token
  * Returns TURN/STUN configuration
  */
-router.get('/turn-token',  (req, res) => {
+// GET /api/remote/turn-token
+router.get('/turn-token', (req, res) => {
   try {
-    const username = req.user && req.user._id
-      ? req.user._id.toString()
-      : 'anonymous';
+    let username = 'anonymous';
+
+    // 1. Manually check auth header since this route is public but we prefer auth for TURN
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = require('jsonwebtoken').decode(token);
+        if (decoded && (decoded.id || decoded._id)) {
+          username = String(decoded.id || decoded._id);
+        }
+      } catch (e) {
+        // ignore invalid token
+      }
+    }
 
     const iceServers = [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -50,10 +63,10 @@ router.get('/turn-token',  (req, res) => {
 
     const hasTurnEnv = process.env.TURN_URL && process.env.TURN_SECRET;
 
-    if (hasTurnEnv && username !== 'anonymous') {
+    if (hasTurnEnv) {
+      // Use configured TURN server
       try {
         const turnCreds = generateTurnCredentials(username, 86400);
-
         if (turnCreds) {
           iceServers.push({
             urls: process.env.TURN_URL,
@@ -63,20 +76,34 @@ router.get('/turn-token',  (req, res) => {
         }
       } catch (err) {
         console.error('[TURN] generateTurnCredentials failed:', err.message);
-        // continue with STUN-only
       }
     } else {
-      console.warn('[TURN] TURN not configured, using STUN-only');
+      // Fallback to OpenRelay (Free Tier) if no env var
+      // This ensures we always have SOME relay capability
+      iceServers.push({
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      });
+      iceServers.push({
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      });
     }
 
     return res.json({ iceServers });
   } catch (err) {
     console.error('[TURN] /turn-token route error:', err);
-    // Still return STUN so WebRTC can function
+    // Still return STUN/OpenRelay fallback
     return res.status(200).json({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        }
       ],
     });
   }

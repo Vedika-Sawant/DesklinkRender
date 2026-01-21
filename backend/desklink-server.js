@@ -88,14 +88,24 @@ function untrackSocket(map, key, socketId) {
   }
 }
 
+
 function emitToUser(userId, event, payload) {
   if (!ioInstance || !userId) return;
+
+  console.log(`[desklink] emitToUser(${userId}, ${event}) - checking map...`);
   const set = onlineUsersById.get(String(userId));
-  if (!set) return;
+  if (!set || set.size === 0) {
+    console.warn(`[desklink] emitToUser: User ${userId} NOT FOUND in onlineUsersById. Available keys:`, Array.from(onlineUsersById.keys()));
+    return;
+  }
+
   set.forEach((socketId) => {
     const socket = ioInstance.sockets.sockets.get(socketId);
     if (socket) {
+      console.log(`[desklink] emitToUser: Sending to socket ${socketId}`);
       socket.emit(event, payload);
+    } else {
+      console.warn(`[desklink] emitToUser: Socket ${socketId} in map but not in ioInstance`);
     }
   });
 }
@@ -145,6 +155,8 @@ function initDesklink(app, server, io) {
   app.post('/api/remote/meeting-request', async (req, res) => {
     const { userId, name } = getAuthContextFromReq(req);
     const { toUserId } = req.body || {};
+
+    console.log(`[desklink] meeting-request: From ${userId} (${name}) -> To ${toUserId}`);
 
     if (!toUserId) {
       return res.status(400).json({ message: 'toUserId is required' });
@@ -205,6 +217,7 @@ function initDesklink(app, server, io) {
       receiverDeviceId: null,
     };
 
+    console.log(`[desklink] emitting request events to target user ${toUserId}`);
     emitToUser(String(toUserId), 'desklink-remote-request', payload);
     emitToUser(String(toUserId), 'remote-access-request', payload);
 
