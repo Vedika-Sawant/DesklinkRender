@@ -98,9 +98,9 @@
             await ShutdownAsync();
         }
 
-        private static async Task HandleProvisioning(string token)
+        private static async Task<bool> HandleProvisioning(string token)
         {
-            if (_config == null) return;
+            if (_config == null) return false;
             
             Console.WriteLine("[DeskLinkAgent] Received Token via Local API!");
             _config.OwnerJwt = token;
@@ -109,7 +109,7 @@
             // If we're not connected, connect now
             if (_socketClient == null)
             {
-                await ConnectSocketAsync();
+                return await ConnectSocketAsync();
             }
             else
             {
@@ -117,19 +117,20 @@
                 // Maybe restart process? 
                 Console.WriteLine("[DeskLinkAgent] Token updated. Restarting agent is recommended but we will try to connect.");
                 // For now, simpler is better.
+                return true; 
             }
         }
 
-        private static async Task ConnectSocketAsync()
+        private static async Task<bool> ConnectSocketAsync()
         {
-            if (_config == null || string.IsNullOrWhiteSpace(_config.OwnerJwt)) return;
+            if (_config == null || string.IsNullOrWhiteSpace(_config.OwnerJwt)) return false;
 
             Environment.SetEnvironmentVariable("AGENT_OWNER_JWT", _config.OwnerJwt);
 
             _socketClient = new SocketClient(_config.DeviceId, _ipcServer!);
             
             // ConnectAsync handles the provisioning API call to backend using the OwnerJwt
-            await _socketClient.ConnectAsync(_config.ServerUrl!);
+            return await _socketClient.ConnectAsync(_config.ServerUrl!);
         }
 
         private static async Task ShutdownAsync()
