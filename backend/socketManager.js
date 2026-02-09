@@ -18,7 +18,7 @@ const onlineUsersByPhone = new Map(); // Map<phoneString, Set<socketId>>
 const onlineUsersById = new Map(); // Map<userId, Set<socketId>>
 const onlineDevicesById = new Map(); // Map<deviceId, Set<socketId>>
 const pendingSignalsByDevice = new Map(); // Map<deviceId, Array<{event,payload}>>
-const metrics = { activeSessions: 0, offersRelayed: 0, iceFailures: 0, datachannelMsgs: 0 };
+const metrics = { activeSessions: 0, offersRelayed: 0, iceFailures: 0, datachannelMsgs: 0, remoteControlEvents: 0 };
 
 function trackUserSocket(map, key, socketId) {
   if (!key) return;
@@ -98,6 +98,7 @@ function createSocketServer(server, clientOrigin) {
   const rooms = new Map(); // Map<roomId, Map<userId, {socketId, userName, isHost}>>
   const roomPermissions = new Map(); // Map<roomId, { micLocked, cameraLocked, chatDisabled }>
   const roomChats = new Map(); // Map<roomId, Array<{ roomId, userId, userName, text, ts }>>
+  const roomRemoteControl = new Map(); // Map<roomId, { controllerUserId, controllerAuthUserId, token, grantedBy, expiresAt }>
 
   // Authenticate socket connections using JWT (Permissive for guests)
   io.use(async (socket, next) => {
@@ -708,6 +709,266 @@ function createSocketServer(server, clientOrigin) {
       }
     });
 
+    /**
+     * =========================================================
+     * In-Meeting Remote Control (signaling + permissions)
+     * =========================================================
+     *
+     * This section exposes generic Socket.IO events that can be used
+     * by the meeting frontend to coordinate remote control between a
+     * TEACHER (host) and a single CONTROLLER (typically a mobile user).
+     *
+     * Events (all room-scoped):
+     *  - REQUEST_REMOTE_CONTROL: participant -> host
+     *  - GRANT_REMOTE_CONTROL:   host -> room (authoritative)
+     *  - REVOKE_REMOTE_CONTROL:  host -> room
+     *  - CONTROL_INPUT_EVENT:    controller -> host (optional fallback; primary path is WebRTC DataChannel)
+     */
+
+    socket.on('REQUEST_REMOTE_CONTROL', ({ roomId }) => {
+      if (!roomId) return;
+      const roomUsers = rooms.get(roomId);
+      if (!roomUsers) return;
+
+      const requester = roomUsers.get(socket.data.userId);
+      if (!requester) return;
+
+      // Find host in this room
+      const hostEntry = Array.from(roomUsers.values()).find((u) => u.isHost);
+      if (!hostEntry) return;
+
+      const hostSocket = io.sockets.sockets.get(hostEntry.socketId);
+      if (!hostSocket) return;
+
+      hostSocket.emit('REQUEST_REMOTE_CONTROL', {
+        roomId,
+        requesterUserId: socket.data.userId,
+        requesterName: requester.userName,
+        requesterAuthUserId: requester.authUserId || null,
+      });
+    });
+
+    socket.on('GRANT_REMOTE_CONTROL', ({ roomId, targetUserId, ttlMs }) => {
+      if (!roomId || !targetUserId) return;
+      const roomUsers = rooms.get(roomId);
+      if (!roomUsers) return;
+
+      const caller = roomUsers.get(socket.data.userId);
+      if (!caller || !caller.isHost) {
+        console.warn('[remote-control] non-host attempted GRANT_REMOTE_CONTROL in room', roomId);
+        return;
+      }
+
+      const target = roomUsers.get(targetUserId);
+      if (!target) {
+        console.warn('[remote-control] target user not found in room', roomId, targetUserId);
+        return;
+      }
+
+      const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const effectiveTtl = typeof ttlMs === 'number' && ttlMs > 0 ? ttlMs : 5 * 60 * 1000;
+      const expiresAt = Date.now() + effectiveTtl;
+
+      roomRemoteControl.set(roomId, {
+        controllerUserId: targetUserId,
+        controllerAuthUserId: target.authUserId || null,
+        token,
+        grantedBy: socket.data.userId,
+        expiresAt,
+      });
+
+      io.to(roomId).emit('GRANT_REMOTE_CONTROL', {
+        roomId,
+        controllerUserId: targetUserId,
+        controllerAuthUserId: target.authUserId || null,
+        grantedBy: socket.data.userId,
+        tokenExpiresAt: expiresAt,
+      });
+    });
+
+    socket.on('REVOKE_REMOTE_CONTROL', ({ roomId }) => {
+      if (!roomId) return;
+      const roomUsers = rooms.get(roomId);
+      if (!roomUsers) return;
+
+      const caller = roomUsers.get(socket.data.userId);
+      if (!caller || !caller.isHost) {
+        console.warn('[remote-control] non-host attempted REVOKE_REMOTE_CONTROL in room', roomId);
+        return;
+      }
+
+      const state = roomRemoteControl.get(roomId) || null;
+      roomRemoteControl.delete(roomId);
+
+      io.to(roomId).emit('REVOKE_REMOTE_CONTROL', {
+        roomId,
+        previousControllerUserId: state ? state.controllerUserId : null,
+        revokedBy: socket.data.userId,
+      });
+    });
+
+    socket.on('CONTROL_INPUT_EVENT', ({ roomId, payload }) => {
+      if (!roomId || !payload) return;
+      metrics.remoteControlEvents++;
+
+      const state = roomRemoteControl.get(roomId);
+      if (!state) return; // no active controller
+
+      if (socket.data.userId !== state.controllerUserId) {
+        console.warn('[remote-control] CONTROL_INPUT_EVENT from non-controller user in room', roomId);
+        return;
+      }
+
+      const roomUsers = rooms.get(roomId);
+      if (!roomUsers) return;
+
+      const hostEntry = Array.from(roomUsers.values()).find((u) => u.isHost);
+      if (!hostEntry) return;
+      const hostSocket = io.sockets.sockets.get(hostEntry.socketId);
+      if (!hostSocket) return;
+
+      hostSocket.emit('CONTROL_INPUT_EVENT', {
+        roomId,
+        fromUserId: socket.data.userId,
+        payload,
+        controllerToken: state.token,
+      });
+    });
+
+    /**
+     * =========================================================
+     * Mobile → Laptop Remote Control (Host grants to mobile)
+     * =========================================================
+     *
+     * Flow:
+     * 1. Host clicks "Allow Mobile Control" button
+     * 2. Host emits REQUEST_MOBILE_REMOTE_CONTROL
+     * 3. Backend grants control to all non-host participants
+     * 4. Mobile participants receive MOBILE_REMOTE_CONTROL_GRANTED
+     * 5. Mobile can now send MOBILE_CONTROL_INPUT events
+     * 6. Host can revoke anytime via REVOKE_MOBILE_REMOTE_CONTROL
+     */
+
+    // Host: Grant mobile control to participants
+    socket.on('REQUEST_MOBILE_REMOTE_CONTROL', ({ roomId, userId }) => {
+      if (!roomId) return;
+      const roomUsers = rooms.get(roomId);
+      if (!roomUsers) return;
+
+      const caller = roomUsers.get(socket.data.userId);
+      if (!caller || !caller.isHost) {
+        console.warn('[mobile-control] non-host attempted REQUEST_MOBILE_REMOTE_CONTROL in room', roomId);
+        return;
+      }
+
+      // Create a token for this mobile control session
+      const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const expiresAt = Date.now() + 30 * 60 * 1000; // 30 minutes
+
+      // Store the mobile control state for this room
+      // We allow ANY non-host participant to control (first come first serve for input)
+      roomRemoteControl.set(roomId, {
+        type: 'mobile',
+        controllerUserId: null, // Any non-host can send inputs
+        token,
+        grantedBy: socket.data.userId,
+        expiresAt,
+      });
+
+      console.log(`[mobile-control] Host ${caller.userName} granted mobile control in room ${roomId}`);
+
+      // Notify the host that control is now active
+      socket.emit('MOBILE_REMOTE_CONTROL_GRANTED', {
+        roomId,
+        targetUserId: socket.data.userId,
+        grantedBy: socket.data.userId,
+        token,
+      });
+
+      // Notify all OTHER participants that they can now control
+      socket.to(roomId).emit('MOBILE_REMOTE_CONTROL_GRANTED', {
+        roomId,
+        targetUserId: null, // All participants can control
+        grantedBy: socket.data.userId,
+        grantedByName: caller.userName,
+        token,
+      });
+    });
+
+    // Host: Revoke mobile control
+    socket.on('REVOKE_MOBILE_REMOTE_CONTROL', ({ roomId }) => {
+      if (!roomId) return;
+      const roomUsers = rooms.get(roomId);
+      if (!roomUsers) return;
+
+      const caller = roomUsers.get(socket.data.userId);
+      if (!caller || !caller.isHost) {
+        console.warn('[mobile-control] non-host attempted REVOKE_MOBILE_REMOTE_CONTROL in room', roomId);
+        return;
+      }
+
+      // Remove mobile control state
+      roomRemoteControl.delete(roomId);
+
+      console.log(`[mobile-control] Host ${caller.userName} revoked mobile control in room ${roomId}`);
+
+      // Notify everyone in the room
+      io.to(roomId).emit('MOBILE_REMOTE_CONTROL_REVOKED', {
+        roomId,
+        revokedBy: socket.data.userId,
+        revokedByName: caller.userName,
+      });
+    });
+
+    // Mobile participant: Send control input to host
+    socket.on('MOBILE_CONTROL_INPUT', ({ roomId, payload }) => {
+      if (!roomId || !payload) return;
+      metrics.remoteControlEvents++;
+
+      const state = roomRemoteControl.get(roomId);
+      if (!state || state.type !== 'mobile') {
+        // No active mobile control session
+        return;
+      }
+
+      // Check if session expired
+      if (Date.now() > state.expiresAt) {
+        roomRemoteControl.delete(roomId);
+        io.to(roomId).emit('MOBILE_REMOTE_CONTROL_REVOKED', {
+          roomId,
+          revokedBy: 'system',
+          reason: 'expired',
+        });
+        return;
+      }
+
+      const roomUsers = rooms.get(roomId);
+      if (!roomUsers) return;
+
+      // Caller must be a non-host participant
+      const caller = roomUsers.get(socket.data.userId);
+      if (!caller) return;
+      if (caller.isHost) {
+        // Host shouldn't be sending mobile control inputs
+        return;
+      }
+
+      // Find the host
+      const hostEntry = Array.from(roomUsers.values()).find((u) => u.isHost);
+      if (!hostEntry) return;
+      const hostSocket = io.sockets.sockets.get(hostEntry.socketId);
+      if (!hostSocket) return;
+
+      // Forward the input to the host
+      hostSocket.emit('MOBILE_CONTROL_INPUT', {
+        roomId,
+        fromUserId: socket.data.userId,
+        fromUserName: caller.userName,
+        payload,
+        token: state.token,
+      });
+    });
+
     // Host: toggle mic lock (participants cannot unmute)
     socket.on('host_toggle_mic', ({ roomId, allowUnmute }) => {
       const roomUsers = rooms.get(roomId);
@@ -905,6 +1166,17 @@ function createSocketServer(server, clientOrigin) {
       // Get host name for the message
       const hostName = user.userName || 'Host';
 
+      // If there is an active remote controller for this room, revoke it immediately
+      const controlState = roomRemoteControl.get(roomId);
+      if (controlState) {
+        io.to(roomId).emit('REVOKE_REMOTE_CONTROL', {
+          roomId,
+          previousControllerUserId: controlState.controllerUserId,
+          revokedBy: userId,
+        });
+        roomRemoteControl.delete(roomId);
+      }
+
       // Broadcast meeting ended to ALL participants in the room
       io.to(roomId).emit('meeting-ended', {
         roomId,
@@ -920,6 +1192,7 @@ function createSocketServer(server, clientOrigin) {
         rooms.delete(roomId);
         roomPermissions.delete(roomId);
         roomChats.delete(roomId);
+        roomRemoteControl.delete(roomId);
         console.log(`Room ${roomId} deleted after meeting end`);
       }, 1000);
     });

@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
+import { getSocketUrl } from '../../../config/socketUrl.js';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'https://desklinkrender5.onrender.com';
+const SOCKET_URL = getSocketUrl();
 
 export function useChatSocket({ token, onMessage }) {
   const socketRef = useRef(null);

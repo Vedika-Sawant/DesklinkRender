@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import { getSocketUrl } from '../../../config/socketUrl.js';
 
 // Local-first Socket.IO endpoint for DeskLink / meeting remote control.
-// You can still override this with VITE_SOCKET_URL if needed.
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+const SOCKET_URL = getSocketUrl();
 
 export function useDeskLinkSocket({ token, onRemoteRequest, onRemoteResponse }) {
   const socketRef = useRef(null);

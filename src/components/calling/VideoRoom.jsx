@@ -13,7 +13,9 @@ import ScreenShareView from './ScreenShareView.jsx';
 import MeetingChatPanel from './MeetingChatPanel.jsx';
 import { MeetingRemoteControlProvider, useMeetingRemoteControl } from './meetingRemoteControlContext.jsx';
 import RemoteVideoArea from '../../modules/desklink/components/RemoteVideoArea.jsx';
-import IncomingRequestModal from '../../modules/desklink/components/IncomingRequestModal.jsx';
+import MobileTouchPad from './MobileTouchPad.jsx';
+import RemoteControlToolbar from './RemoteControlToolbar.jsx';
+import ControlRequestModal from './ControlRequestModal.jsx';
 
 function VideoRoomInner({
   roomId,
@@ -30,6 +32,7 @@ function VideoRoomInner({
   const [isReactionsOpen, setIsReactionsOpen] = React.useState(false);
   const [isHostPanelOpen, setIsHostPanelOpen] = React.useState(false);
   const [selectedParticipantId, setSelectedParticipantId] = React.useState('');
+  const [showMobileControlConfirm, setShowMobileControlConfirm] = React.useState(false);
 
   const {
     localStream,
@@ -49,6 +52,8 @@ function VideoRoomInner({
     hostChatDisabled,
     reactions,
     hostNotice,
+    isMobileControlActive,
+    isMobileControlPending,
     sendChatMessage,
     muteAllParticipants,
     setMicLock,
@@ -64,6 +69,10 @@ function VideoRoomInner({
     endMeeting,
     leaveRoom,
     initializeLocalStream,
+    requestMobileRemoteControl,
+    revokeMobileRemoteControl,
+    sendMobileControlInput,
+    mobileControlInput,
   } = useRoomClient(roomId, userId, userName, isHost, onLeave);
 
   const {
@@ -78,6 +87,7 @@ function VideoRoomInner({
     incomingRequest,
     acceptIncomingRequest,
     rejectIncomingRequest,
+    endControl,
   } = useMeetingRemoteControl();
 
   // Initialize local media based on initial audio/video flags
@@ -227,11 +237,26 @@ function VideoRoomInner({
         </div>
       )}
 
-      {/* Host notice toast (e.g. "Host muted you") */}
+      {/* Host notice overlay (when host mutes you etc) */}
       {hostNotice && (
         <div className="pointer-events-none absolute top-4 right-4 z-40">
           <div className="rounded-md bg-slate-900/90 border border-slate-700 px-3 py-2 text-xs text-slate-100 shadow-lg">
             {hostNotice}
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Control Active Indicator for Host */}
+      {isHost && isMobileControlActive && mobileControlInput && (
+        <div className="pointer-events-none absolute top-4 left-4 z-40">
+          <div className="rounded-lg bg-emerald-900/90 border border-emerald-500/50 px-4 py-2 text-xs text-emerald-100 shadow-lg flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <div>
+              <div className="font-semibold">Mobile Control Active</div>
+              <div className="text-[10px] text-emerald-200">
+                {mobileControlInput.fromUserName || 'Participant'} is controlling
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -255,14 +280,37 @@ function VideoRoomInner({
             </div>
             <div className="flex-1 bg-slate-950/80 p-2">
               {remoteDesktopStream && sessionConfig ? (
-                <RemoteVideoArea
-                  stream={remoteDesktopStream}
-                  onControlMessage={sendControlMessage}
-                  sessionId={sessionConfig?.sessionId || ''}
-                  token={sessionConfig?.sessionToken || ''}
-                  permissions={permissions}
-                  stats={remoteStats}
-                />
+                <div className="h-full w-full">
+                  <MobileTouchPad
+                    stream={remoteDesktopStream}
+                    onControlMessage={sendControlMessage}
+                    sessionId={sessionConfig?.sessionId || ''}
+                    token={sessionConfig?.sessionToken || ''}
+                    permissions={permissions}
+                    stats={remoteStats}
+                    onToggleKeyboard={() => {
+                      // Keyboard is driven by higher-level meeting UI; no-op placeholder
+                    }}
+                    isKeyboardVisible={false}
+                    onScroll={(deltaY) => {
+                      // Provide an explicit scroll hook so MobileTouchPad can send scroll-only actions
+                      // while pointer movement is handled inside RemoteVideoArea.
+                      if (!remoteDesktopStream || !sessionConfig) return;
+                      // Reuse sendControlMessage; RemoteVideoArea already covers wheel events,
+                      // but this gives dedicated scroll buttons.
+                      // The concrete wheel message is built in controlProtocol within RemoteVideoArea.
+                      // Here we simply emit a synthetic wheel payload understood by the agent.
+                      sendControlMessage({
+                        type: 'wheel',
+                        sessionId: sessionConfig.sessionId,
+                        deltaX: 0,
+                        deltaY,
+                        auth: sessionConfig.sessionToken,
+                        ts: Date.now(),
+                      });
+                    }}
+                  />
+                </div>
               ) : (
                 <div className="flex flex-col h-full text-xs text-slate-300">
                   <div className="mb-2 text-[11px] font-medium text-slate-200">Request control from someone in this meeting</div>
@@ -315,6 +363,18 @@ function VideoRoomInner({
           </div>
         </div>
       )}
+
+      {/* Floating remote-control status indicator */}
+      <RemoteControlToolbar
+        role={isHost ? 'host' : 'participant'}
+        state={sessionConfig ? 'active' : incomingRequest || isRemoteControlOpen ? 'pending' : 'idle'}
+        onOpenPanel={toggleRemoteControlPanel}
+        onRevoke={() => {
+          if (sessionConfig) {
+            endControl();
+          }
+        }}
+      />
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-hidden flex">
@@ -421,6 +481,20 @@ function VideoRoomInner({
         isChatDisabled={hostChatDisabled}
         isRemoteControlOpen={isRemoteControlOpen}
         onToggleRemoteControl={toggleRemoteControlPanel}
+        isMobileControlActive={isMobileControlActive}
+        isMobileControlPending={isMobileControlPending}
+        onToggleMobileControl={() => {
+          if (isHost) {
+            if (isMobileControlActive) {
+              // Host wants to revoke
+              revokeMobileRemoteControl();
+            } else {
+              // Host wants to grant
+              setShowMobileControlConfirm(true);
+            }
+          }
+          // Non-host participants don't control this button
+        }}
       />
 
       {isReactionsOpen && (
@@ -541,14 +615,125 @@ function VideoRoomInner({
           </div>
         </div>
       )}
-      {/* Incoming DeskLink request modal (owner side) */}
+      {/* Mobile Control Touchpad for Participants */}
+      {!isHost && isMobileControlActive && (
+        <div className="pointer-events-auto absolute bottom-28 right-6 z-40 w-[420px] max-w-[90vw]">
+          <div className="bg-slate-900/95 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[340px]">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800">
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold text-emerald-100">🎮 Mobile Control Active</span>
+                <span className="text-[10px] text-slate-400">Control the host&apos;s screen</span>
+              </div>
+            </div>
+            <div className="flex-1 bg-slate-950/80 p-3">
+              <div className="h-full flex flex-col gap-3">
+                {/* Touchpad Area */}
+                <div className="flex-1 rounded-xl border-2 border-emerald-500/30 bg-slate-800/50 relative overflow-hidden cursor-crosshair"
+                  onMouseMove={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const deltaX = e.movementX * 2;
+                    const deltaY = e.movementY * 2;
+                    if (Math.abs(deltaX) > 0 || Math.abs(deltaY) > 0) {
+                      sendMobileControlInput({ type: 'mousemove', deltaX, deltaY });
+                    }
+                  }}
+                >
+                  <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-xs pointer-events-none">
+                    <div className="text-center">
+                      <div className="text-2xl mb-2">🖱️</div>
+                      <div>Move mouse here</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Control Buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onMouseDown={() => sendMobileControlInput({ type: 'mousedown', button: 'left' })}
+                    onMouseUp={() => sendMobileControlInput({ type: 'mouseup', button: 'left' })}
+                    className="flex-1 rounded-xl bg-slate-700 hover:bg-slate-600 active:bg-emerald-600 px-3 py-2 text-xs font-medium text-slate-100 transition-colors"
+                  >
+                    Left Click
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={() => sendMobileControlInput({ type: 'mousedown', button: 'right' })}
+                    onMouseUp={() => sendMobileControlInput({ type: 'mouseup', button: 'right' })}
+                    className="flex-1 rounded-xl bg-slate-700 hover:bg-slate-600 active:bg-emerald-600 px-3 py-2 text-xs font-medium text-slate-100 transition-colors"
+                  >
+                    Right Click
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendMobileControlInput({ type: 'scroll', deltaY: -120 })}
+                    className="px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendMobileControlInput({ type: 'scroll', deltaY: 120 })}
+                    className="px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs"
+                  >
+                    ↓
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Incoming DeskLink / meeting remote-control request modal (owner side) */}
       {incomingRequest && (
-        <IncomingRequestModal
+        <ControlRequestModal
           requesterName={incomingRequest.callerName || 'Remote user'}
-          deviceLabel={incomingRequest.fromDeviceId}
-          onAccept={acceptIncomingRequest}
+          roomLabel={roomId}
+          onGrant={acceptIncomingRequest}
           onReject={rejectIncomingRequest}
         />
+      )}
+
+      {showMobileControlConfirm && isHost && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-[#0B1120] border border-slate-800 shadow-2xl overflow-hidden">
+            <div className="border-b border-slate-800 bg-slate-900/70 px-4 py-3">
+              <div className="text-sm font-semibold text-slate-50">Allow mobile control?</div>
+              <div className="text-[11px] text-slate-400 mt-0.5">Room {roomId}</div>
+            </div>
+            <div className="px-4 py-4 space-y-3 bg-slate-950/80">
+              <p className="text-sm text-slate-300">
+                Allow mobile participants to temporarily control your PC&apos;s mouse and keyboard.
+              </p>
+              <p className="text-[11px] leading-relaxed text-amber-100 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+                You can revoke access at any time by clicking the mobile control button again.
+                Only participants you trust should be given control.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-800 bg-slate-900/70 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setShowMobileControlConfirm(false)}
+                className="rounded-xl border border-slate-700 bg-transparent px-4 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-slate-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  requestMobileRemoteControl();
+                  setShowMobileControlConfirm(false);
+                }}
+                className="rounded-xl bg-emerald-500 px-4 py-1.5 text-xs font-medium text-slate-950 hover:bg-emerald-400"
+              >
+                Allow Control
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

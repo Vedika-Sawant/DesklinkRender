@@ -1,9 +1,10 @@
 // useDeskLinkWebRTC.js - FULLY FIXED VERSION
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
+import { getSocketUrl } from '../../../config/socketUrl.js';
 
-// Local-first signaling endpoint; override with VITE_SOCKET_URL if desired.
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+// Local-first signaling endpoint shared with other modules.
+const SOCKET_URL = getSocketUrl();
 const TURN_ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   {

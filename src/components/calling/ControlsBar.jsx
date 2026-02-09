@@ -17,6 +17,7 @@ import {
   Info,
   MoreVertical,
   Share2,
+  Smartphone,
 } from 'lucide-react';
 
 export default function ControlsBar({
@@ -41,6 +42,10 @@ export default function ControlsBar({
   // In-meeting remote control (VisionDesk Control Mode)
   isRemoteControlOpen = false,
   onToggleRemoteControl,
+  // Mobile → PC remote control icon state (optional)
+  isMobileControlActive = false,
+  isMobileControlPending = false,
+  onToggleMobileControl = () => {},
 }) {
   return (
     <div className="border-t border-slate-800 bg-[#1E293B] px-6 py-4">
@@ -126,6 +131,36 @@ export default function ControlsBar({
             title={isScreenSharing ? 'Stop sharing' : 'Share screen'}
           >
             <Monitor className="h-5 w-5" />
+          </button>
+
+          {/* Mobile → PC Remote Control (host allows mobile to drive this PC) */}
+          <button
+            onClick={onToggleMobileControl}
+            disabled={!isHost && !isMobileControlActive}
+            className={`flex items-center justify-center w-12 h-12 rounded-full transition-all ${
+              isMobileControlActive
+                ? isHost
+                  ? 'bg-emerald-600 text-white hover:bg-red-500' // Host can click to revoke
+                  : 'bg-emerald-600 text-white' // Participant sees active state
+                : isMobileControlPending
+                  ? 'bg-amber-600 text-white animate-pulse'
+                  : isHost
+                    ? 'bg-slate-700 text-white hover:bg-slate-600'
+                    : 'bg-slate-700 text-slate-500 cursor-not-allowed' // Disabled for non-host
+            }`}
+            title={
+              isMobileControlActive
+                ? isHost
+                  ? 'Click to revoke mobile control'
+                  : 'Mobile control is active - you can control the host screen'
+                : isMobileControlPending
+                  ? 'Enabling mobile control...'
+                  : isHost
+                    ? 'Allow mobile participants to control your screen'
+                    : 'Mobile control (host only)'
+            }
+          >
+            <Smartphone className={`h-5 w-5 ${isMobileControlPending ? 'animate-bounce' : ''}`} />
           </button>
 
           {/* Remote Control - In-Meeting VisionDesk Control Mode */}

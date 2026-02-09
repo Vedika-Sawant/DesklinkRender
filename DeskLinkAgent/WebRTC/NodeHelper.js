@@ -11,8 +11,7 @@ const { RTCVideoSource } = nonstandard;
 
 const io = require('socket.io-client');
 const robot = require('robotjs');
-const screenshot = require('screenshot-desktop');
-const { PNG } = require('pngjs');
+const { createScreenSender } = require('../../remote-control/screenSender');
 
 const TURN_ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -45,7 +44,7 @@ console.error('[NodeHelper] Starting with config:', JSON.stringify(config, null,
 let peerConnection = null;
 let dataChannel = null;
 let socket = null;
-let screenCaptureInterval = null;
+let screenSenderInstance = null;
 let pendingRemoteIceCandidates = [];
 let videoSource = null;
 let videoTrack = null;
@@ -349,62 +348,30 @@ function handleClipboard(message) {
 // SCREEN CAPTURE LOGIC
 // ======================================================
 
-async function startScreenCapture() {
+function startScreenCapture() {
   if (!videoSource) {
     console.error('[Screen] ✗ Cannot start capture: videoSource is not initialized');
     return;
   }
-  if (screenCaptureInterval) {
+  if (screenSenderInstance) {
     console.error('[Screen] Capture already running');
     return;
   }
 
   console.error('[Screen] ===== STARTING SCREEN CAPTURE =====');
-  const FPS = 10; 
-  const interval = 1000 / FPS;
-
-  screenCaptureInterval = setInterval(async () => {
-    try {
-      const imgBuffer = await screenshot({ format: 'png' });
-      const png = PNG.sync.read(imgBuffer);
-      const { width, height, data: rgba } = png;
-
-      const frameSize = width * height;
-      const yPlaneSize = frameSize;
-      const uvPlaneSize = frameSize >> 2;
-
-      const i420 = Buffer.alloc(yPlaneSize + uvPlaneSize + uvPlaneSize);
-
-      // Convert RGBA to I420
-      for (let i = 0; i < frameSize; i++) {
-        const r = rgba[i * 4];
-        const g = rgba[i * 4 + 1];
-        const b = rgba[i * 4 + 2];
-
-        let y = 0.257 * r + 0.504 * g + 0.098 * b + 16;
-        i420[i] = Math.max(0, Math.min(255, y));
-      }
-
-      // Fill U and V planes with neutral gray
-      i420.fill(128, yPlaneSize, yPlaneSize + uvPlaneSize + uvPlaneSize);
-
-      videoSource.onFrame({
-        width,
-        height,
-        data: i420,
-      });
-    } catch (err) {
-      console.error('[Screen] Capture error:', err);
-    }
-  }, interval);
-  
-  console.error('[Screen] ✓ Capture started at', FPS, 'FPS');
+  // Use shared helper so capture logic is reusable and testable.
+  screenSenderInstance = createScreenSender(videoSource, { fps: 10, logger: console });
+  screenSenderInstance.start();
 }
 
 function stopScreenCapture() {
-  if (screenCaptureInterval) {
-    clearInterval(screenCaptureInterval);
-    screenCaptureInterval = null;
+  if (screenSenderInstance) {
+    try {
+      screenSenderInstance.stop();
+    } catch (e) {
+      console.error('[Screen] Error stopping ScreenSender:', e);
+    }
+    screenSenderInstance = null;
   }
 
   if (videoTrack) {
@@ -416,7 +383,6 @@ function stopScreenCapture() {
     videoTrack = null;
   }
   videoSource = null;
-  console.error('[Screen] Capture stopped');
 }
 
 // ======================================================

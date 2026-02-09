@@ -1,23 +1,38 @@
-import { useEffect, useState } from "react";
-import { anydeskSocket } from "./anydeskSocket";
+import { useEffect, useState, useRef } from "react";
+import { createAnyDeskSocket } from "./anydeskSocket";
 
 export function useAnyDesk(roomId) {
   const [connected, setConnected] = useState(false);
   const [remoteStream, setRemoteStream] = useState(null);
+  const socketRef = useRef(null);
 
   useEffect(() => {
-    anydeskSocket.emit("anydesk:join", { roomId });
+    // Lazy initialize the socket
+    const socket = createAnyDeskSocket();
+    socketRef.current = socket;
 
-    anydeskSocket.on("anydesk:connected", () => {
+    if (!socket) {
+      console.warn('[useAnyDesk] Socket not available');
+      return;
+    }
+
+    socket.emit("anydesk:join", { roomId });
+
+    const handleConnected = () => {
       setConnected(true);
-    });
+    };
 
-    anydeskSocket.on("anydesk:stream", (stream) => {
+    const handleStream = (stream) => {
       setRemoteStream(stream);
-    });
+    };
+
+    socket.on("anydesk:connected", handleConnected);
+    socket.on("anydesk:stream", handleStream);
 
     return () => {
-      anydeskSocket.emit("anydesk:leave", { roomId });
+      socket.off("anydesk:connected", handleConnected);
+      socket.off("anydesk:stream", handleStream);
+      socket.emit("anydesk:leave", { roomId });
     };
   }, [roomId]);
 

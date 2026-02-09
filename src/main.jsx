@@ -1,13 +1,16 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { HashRouter } from 'react-router-dom';
-import App from './App.jsx';
+import { RouterProvider } from 'react-router-dom';
+import { router } from './router.jsx';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <HashRouter>
-      <App />
-    </HashRouter>
+    <RouterProvider 
+      router={router} 
+      future={{
+        v7_startTransition: true,
+      }}
+    />
   </React.StrictMode>
 );

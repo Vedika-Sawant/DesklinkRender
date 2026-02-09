@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
+import { getSocketUrl } from '../../config/socketUrl.js';
 
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -39,6 +40,9 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
   const [hostChatDisabled, setHostChatDisabled] = useState(false);
   const [reactions, setReactions] = useState([]);
   const [hostNotice, setHostNotice] = useState(null);
+  const [isMobileControlActive, setIsMobileControlActive] = useState(false);
+  const [isMobileControlPending, setIsMobileControlPending] = useState(false);
+  const [mobileControlInput, setMobileControlInput] = useState(null); // Latest input from mobile
 
   const socketRef = useRef(null);
   const peerConnectionsRef = useRef(new Map());
@@ -1122,6 +1126,94 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
     [roomId]
   );
 
+  // Mobile → PC remote control: host allows a mobile participant to control this PC.
+  // We emit REQUEST_MOBILE_REMOTE_CONTROL and listen for granted / revoked events
+  // so the toolbar icon can reflect real-time state.
+  const requestMobileRemoteControl = useCallback(() => {
+    if (!socketRef.current) return;
+    if (!isHost) {
+      console.warn('[MobileControl] Only host can grant mobile control');
+      return;
+    }
+    setIsMobileControlPending(true);
+    socketRef.current.emit('REQUEST_MOBILE_REMOTE_CONTROL', {
+      roomId,
+      userId,
+    });
+  }, [roomId, userId, isHost]);
+
+  // Host: Revoke mobile control access
+  const revokeMobileRemoteControl = useCallback(() => {
+    if (!socketRef.current) return;
+    if (!isHost) {
+      console.warn('[MobileControl] Only host can revoke mobile control');
+      return;
+    }
+    socketRef.current.emit('REVOKE_MOBILE_REMOTE_CONTROL', {
+      roomId,
+    });
+  }, [roomId, isHost]);
+
+  // Mobile participant: Send control input to host
+  const sendMobileControlInput = useCallback((payload) => {
+    if (!socketRef.current) return;
+    if (isHost) {
+      // Host receives inputs, doesn't send them
+      return;
+    }
+    if (!isMobileControlActive) {
+      console.warn('[MobileControl] Mobile control not active');
+      return;
+    }
+    socketRef.current.emit('MOBILE_CONTROL_INPUT', {
+      roomId,
+      payload,
+    });
+  }, [roomId, isHost, isMobileControlActive]);
+
+  const handleMobileControlGranted = useCallback(
+    ({ roomId: msgRoomId, targetUserId }) => {
+      if (!msgRoomId || msgRoomId !== roomId) return;
+      if (targetUserId && targetUserId !== userId) return;
+      setIsMobileControlActive(true);
+      setIsMobileControlPending(false);
+    },
+    [roomId, userId]
+  );
+
+  const handleMobileControlRevoked = useCallback(
+    ({ roomId: msgRoomId, targetUserId }) => {
+      if (!msgRoomId || msgRoomId !== roomId) return;
+      // For host, targetUserId might be null (all participants) or specific
+      // For participants, accept the revoke
+      setIsMobileControlActive(false);
+      setIsMobileControlPending(false);
+      setMobileControlInput(null);
+      console.log('[MobileControl] Control revoked');
+    },
+    [roomId]
+  );
+
+  // Host: Handle incoming mobile control input from participants
+  const handleMobileControlInput = useCallback(
+    ({ roomId: msgRoomId, fromUserId, fromUserName, payload, token }) => {
+      if (!msgRoomId || msgRoomId !== roomId) return;
+      if (!isHost) return; // Only host receives these
+      
+      console.log('[MobileControl] Input received from', fromUserName, ':', payload?.type);
+      
+      // Store the latest input for components to consume
+      setMobileControlInput({
+        fromUserId,
+        fromUserName,
+        payload,
+        token,
+        timestamp: Date.now(),
+      });
+    },
+    [roomId, isHost]
+  );
+
   const toggleAudio = useCallback(
     async (enabled) => {
       setIsAudioEnabled(enabled);
@@ -1413,8 +1505,8 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
       return;
     }
 
-    // Local-first Socket.IO endpoint for meetings; override with VITE_SOCKET_URL if needed.
-    socketRef.current = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000', {
+    // Local-first Socket.IO endpoint for meetings; shared with other modules.
+    socketRef.current = io(getSocketUrl(), {
       auth: { token: authToken },
       transports: ['websocket'],
       path: '/socket.io',
@@ -1475,6 +1567,9 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
     socket.on('host_remove_user', handleHostRemoveUser);
     socket.on('reaction', handleReaction);
     socket.on('meeting-ended', handleMeetingEnded);
+    socket.on('MOBILE_REMOTE_CONTROL_GRANTED', handleMobileControlGranted);
+    socket.on('MOBILE_REMOTE_CONTROL_REVOKED', handleMobileControlRevoked);
+    socket.on('MOBILE_CONTROL_INPUT', handleMobileControlInput);
 
     return () => {
       socket.off('room-users', handleRoomUsers);
@@ -1499,6 +1594,9 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
       socket.off('host_remove_user', handleHostRemoveUser);
       socket.off('reaction', handleReaction);
       socket.off('meeting-ended', handleMeetingEnded);
+      socket.off('MOBILE_REMOTE_CONTROL_GRANTED', handleMobileControlGranted);
+      socket.off('MOBILE_REMOTE_CONTROL_REVOKED', handleMobileControlRevoked);
+      socket.off('MOBILE_CONTROL_INPUT', handleMobileControlInput);
       socket.disconnect();
     };
   }, [
@@ -1528,6 +1626,9 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
     handleHostRemoveUser,
     handleReaction,
     handleMeetingEnded,
+    handleMobileControlGranted,
+    handleMobileControlRevoked,
+    handleMobileControlInput,
   ]);
 
   const sendChatMessage = useCallback(
@@ -1676,6 +1777,8 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
     hostChatDisabled,
     reactions,
     hostNotice,
+    isMobileControlActive,
+    isMobileControlPending,
     initializeLocalStream,
     toggleAudio,
     toggleVideo,
@@ -1690,5 +1793,9 @@ export function useRoomClient(roomId, userId, userName, isHost = false, onLeave 
     setChatDisabled,
     removeParticipant,
     sendReaction,
+    requestMobileRemoteControl,
+    revokeMobileRemoteControl,
+    sendMobileControlInput,
+    mobileControlInput,
   };
 }

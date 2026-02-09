@@ -5,6 +5,7 @@ import {
   createMouseWheelMessage,
   MessageThrottler,
 } from '../utils/controlProtocol';
+import { attachMobileRemoteControl } from '../../../utils/mobileRemoteControl.js';
 
 export default function RemoteVideoArea({
   stream,
@@ -18,6 +19,7 @@ export default function RemoteVideoArea({
   const containerRef = useRef(null);
   const [remoteCursor, setRemoteCursor] = useState({ x: 0, y: 0, visible: false });
   const throttlerRef = useRef(new MessageThrottler(16));
+  const mobileDetachRef = useRef(null);
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -28,8 +30,55 @@ export default function RemoteVideoArea({
   useEffect(() => {
     return () => {
       throttlerRef.current.clear();
+      if (mobileDetachRef.current) {
+        mobileDetachRef.current();
+        mobileDetachRef.current = null;
+      }
     };
   }, []);
+
+  // Attach mobile touch handlers when running on a touch device.
+  useEffect(() => {
+    if (!videoRef.current) return;
+
+    const isCoarsePointer =
+      typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(pointer: coarse)').matches;
+
+    if (!isCoarsePointer) {
+      return;
+    }
+
+    try {
+      const detachHandle = attachMobileRemoteControl({
+        element: videoRef.current,
+        send: onControlMessage,
+        messageFactory: {
+          createMouseMove: (x, y) =>
+            createMouseMoveMessage(x, y, sessionId, token),
+          createMouseClick: (x, y, button) =>
+            createMouseClickMessage(x, y, button, sessionId, token),
+          createMouseWheel: (dx, dy) =>
+            createMouseWheelMessage(dx, dy, sessionId, token),
+          // Keyboard integration for mobile is handled at a higher level
+          // (e.g. global key listeners) so we omit createKey here.
+        },
+        throttleMs: 16,
+      });
+
+      mobileDetachRef.current = detachHandle.detach;
+    } catch (err) {
+      console.error('[RemoteVideoArea] Failed to attach mobile remote control:', err);
+    }
+
+    return () => {
+      if (mobileDetachRef.current) {
+        mobileDetachRef.current();
+        mobileDetachRef.current = null;
+      }
+    };
+  }, [onControlMessage, sessionId, token]);
 
   const getNormalizedCoords = (e) => {
     const rect = videoRef.current.getBoundingClientRect();
