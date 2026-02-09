@@ -23,7 +23,7 @@ public class SocketClient : IAsyncDisposable
         _ipc = ipc;
     }
 
-    public async Task ConnectAsync(string serverUrl)
+    public async Task<bool> ConnectAsync(string serverUrl)
     {
         Console.WriteLine($"[Socket] ConnectAsync => serverUrl={serverUrl}");
 
@@ -31,7 +31,7 @@ public class SocketClient : IAsyncDisposable
         if (string.IsNullOrWhiteSpace(ownerJwt))
         {
             Console.Error.WriteLine("[Agent] AGENT_OWNER_JWT is not set; cannot provision agent token.");
-            return;
+            return false;
         }
 
         // Provision an agent-specific JWT from the backend
@@ -51,7 +51,7 @@ public class SocketClient : IAsyncDisposable
             if (!resp.IsSuccessStatusCode)
             {
                 Console.Error.WriteLine($"[Agent] Provision failed ({(int)resp.StatusCode}): {body}");
-                return;
+                return false;
             }
 
             using var doc = JsonDocument.Parse(body);
@@ -99,13 +99,13 @@ public class SocketClient : IAsyncDisposable
         catch (Exception ex)
         {
             Console.Error.WriteLine("[Agent] Provision exception: " + ex);
-            return;
+            return false;
         }
 
         if (string.IsNullOrWhiteSpace(agentJwt))
         {
             Console.Error.WriteLine("[Agent] Provision returned empty agentJwt; aborting.");
-            return;
+            return false;
         }
 
         Console.WriteLine("[Agent] Provision success for user=" + ownerUserId);
@@ -206,10 +206,11 @@ public class SocketClient : IAsyncDisposable
         if (!await ValidateServerConnection(serverUrl))
         {
             Console.Error.WriteLine("[Agent] Server validation failed. Aborting connection.");
-            return;
+            return false;
         }
 
         await _client.ConnectAsync();
+        return true;
     }
 
     private async Task<bool> ValidateServerConnection(string serverUrl)

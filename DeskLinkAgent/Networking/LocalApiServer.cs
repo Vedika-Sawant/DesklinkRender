@@ -13,7 +13,7 @@ public class LocalApiServer
 
     public const int Port = 17600;
     
-    public event Func<string, Task>? OnProvisioned;
+    public event Func<string, Task<bool>>? OnProvisioned;
 
     public LocalApiServer(string deviceId)
     {
@@ -33,6 +33,8 @@ public class LocalApiServer
             ctx.Response.Headers.Add("Access-Control-Allow-Origin", "*");
             ctx.Response.Headers.Add("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
             ctx.Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+            ctx.Response.Headers.Add("Access-Control-Allow-Private-Network", "true"); // Required for Chrome/Edge PNA
+            
             if (ctx.Request.Method == HttpMethod.OPTIONS)
             {
                 ctx.Response.StatusCode = 204;
@@ -65,17 +67,26 @@ public class LocalApiServer
                     {
                         Console.WriteLine("[LocalApi] Provision token received.");
                         
-                        // Fire and forget the provisioning task so we don't block the HTTP response too long
-                        _ = Task.Run(async () => 
+                        if (OnProvisioned != null) 
                         {
-                            if (OnProvisioned != null) await OnProvisioned.Invoke(token);
-                        });
-
-                        ctx.Response.StatusCode = 200;
-                        await ctx.Response.Send("OK");
-                        return;
+                            bool success = await OnProvisioned.Invoke(token);
+                            if (success)
+                            {
+                                ctx.Response.StatusCode = 200;
+                                await ctx.Response.Send("OK");
+                                return;
+                            }
+                            else 
+                            {
+                                ctx.Response.StatusCode = 500;
+                                await ctx.Response.Send("Provisioning Failed internally");
+                                return;
+                            }
+                        }
                     }
                 }
+
+
                 
                 ctx.Response.StatusCode = 400;
                 await ctx.Response.Send("Missing token");
