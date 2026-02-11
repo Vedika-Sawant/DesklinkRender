@@ -20,6 +20,11 @@ const onlineDevicesById = new Map(); // Map<deviceId, Set<socketId>>
 const pendingSignalsByDevice = new Map(); // Map<deviceId, Array<{event,payload}>>
 const metrics = { activeSessions: 0, offersRelayed: 0, iceFailures: 0, datachannelMsgs: 0 };
 
+// Meeting Data (Moved to module scope to allow external access)
+const rooms = new Map(); // Map<roomId, Map<userId, {socketId, userName, isHost, authUserId}>>
+const roomPermissions = new Map(); // Map<roomId, { micLocked, cameraLocked, chatDisabled }>
+const roomChats = new Map(); // Map<roomId, Array<{ roomId, userId, userName, text, ts }>>
+
 function trackUserSocket(map, key, socketId) {
   if (!key) return;
   if (!map.has(key)) {
@@ -93,11 +98,6 @@ function createSocketServer(server, clientOrigin) {
   });
 
   ioInstance = io;
-
-  // Store room data for meetings
-  const rooms = new Map(); // Map<roomId, Map<userId, {socketId, userName, isHost}>>
-  const roomPermissions = new Map(); // Map<roomId, { micLocked, cameraLocked, chatDisabled }>
-  const roomChats = new Map(); // Map<roomId, Array<{ roomId, userId, userName, text, ts }>>
 
   // Authenticate socket connections using JWT (Permissive for guests)
   io.use(async (socket, next) => {
@@ -963,4 +963,10 @@ function getMetrics() {
   return { ...metrics };
 }
 
-module.exports = { createSocketServer, emitToUser, emitToDevice, getMetrics };
+function getMeetingParticipants(roomId) {
+  if (!rooms.has(roomId)) return [];
+  // Return array of userIds (strings)
+  return Array.from(rooms.get(roomId).keys());
+}
+
+module.exports = { createSocketServer, emitToUser, emitToDevice, getMetrics, getMeetingParticipants };

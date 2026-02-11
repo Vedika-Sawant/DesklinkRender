@@ -42,6 +42,8 @@ const registerDevice = async (req, res) => {
       device.deviceName = deviceName;
       device.osInfo = osInfo;
       device.lastOnline = new Date();
+      device.lastHeartbeat = new Date();
+      device.status = 'online';
       device.deleted = false;
       device.deletedAt = null;
       if (platform) device.platform = platform;
@@ -54,6 +56,8 @@ const registerDevice = async (req, res) => {
         osInfo,
         platform: platform || '',
         lastOnline: new Date(),
+        lastHeartbeat: new Date(),
+        status: 'online',
       });
     }
 
@@ -69,12 +73,116 @@ const registerDevice = async (req, res) => {
         deviceName: device.deviceName,
         osInfo: device.osInfo,
         lastOnline: device.lastOnline,
+        status: device.status,
         blocked: device.blocked,
         deleted: device.deleted,
       },
     });
   } catch (error) {
     console.error('[device/register] error', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * POST /api/device/heartbeat
+ * Update device heartbeat and status.
+ */
+const updateHeartbeat = async (req, res) => {
+  const { deviceId, status } = req.body;
+
+  if (!deviceId) {
+    return res.status(400).json({ message: 'deviceId is required' });
+  }
+
+  try {
+    const device = await Device.findOne({ deviceId });
+    // We don't strictly enforce ownership here for performance, 
+    // but the route is projected by auth middleware anyway.
+    if (!device) {
+      return res.status(404).json({ message: 'Device not found' });
+    }
+
+    if (String(device.userId) !== String(req.user._id)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    device.lastHeartbeat = new Date();
+    device.lastOnline = new Date();
+    if (status) device.status = status;
+    else device.status = 'online'; // Default to online on heartbeat
+
+    await device.save();
+    res.json({ status: 'ok', deviceStatus: device.status });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * GET /api/device/:deviceId/status
+ * Get current device status.
+ */
+const getDeviceStatus = async (req, res) => {
+  const { deviceId } = req.params;
+
+  if (!deviceId) return res.status(400).json({ message: 'deviceId is required' });
+
+  try {
+    const device = await Device.findOne({ deviceId });
+    if (!device) return res.status(404).json({ message: 'Device not found' });
+
+    // Check if heartbeat is stale (> 60s)
+    const isStale = (Date.now() - new Date(device.lastHeartbeat).getTime()) > 60000;
+    if (isStale && device.status === 'online') {
+      device.status = 'offline';
+      await device.save();
+    }
+
+    res.json({
+      deviceId: device.deviceId,
+      status: device.status,
+      lastHeartbeat: device.lastHeartbeat
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+/**
+ * GET /api/device/user/:userId/status
+ * Get the active agent status for a specific user.
+ */
+const getUserDeviceStatus = async (req, res) => {
+  const { userId } = req.params;
+
+  if (!userId) return res.status(400).json({ message: 'userId is required' });
+
+  try {
+    const device = await Device.findOne({
+      userId,
+      status: 'online',
+      blocked: false,
+      deleted: false
+    }).sort({ lastOnline: -1 });
+
+    if (!device) {
+      return res.json({ status: 'offline' });
+    }
+
+    // Check freshness
+    const isFresh = (Date.now() - new Date(device.lastHeartbeat).getTime()) < 120000;
+    if (!isFresh) {
+      return res.json({ status: 'offline' });
+    }
+
+    res.json({
+      status: 'online',
+      deviceId: device.deviceId,
+      lastHeartbeat: device.lastHeartbeat
+    });
+  } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
@@ -147,6 +255,9 @@ module.exports = {
   registerDevice,
   setDeviceBlock,
   softDeleteDevice,
+  updateHeartbeat,
+  getDeviceStatus,
+  getUserDeviceStatus
 };
 
 

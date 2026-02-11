@@ -1,25 +1,8 @@
-// desklink-server.js - Reintegrated logic for DeskLink / in-meeting remote control
-// ---------------------------------------------------------------------------
-// Now runs as a module within the main backend server.
-
 const jwt = require('jsonwebtoken');
-const express = require('express'); // Used for Router if needed, or just attaching to app
-
-// ---------------------------------------------------------------------------
-// In-memory data stores (local-only, cleared on server restart)
-// ---------------------------------------------------------------------------
-
-// Map<sessionId, Session>
-const sessions = new Map();
-
-// Map<userId, Set<socketId>>
-const onlineUsersById = new Map();
-
-// Map<deviceId, Set<socketId>>
-const onlineDevicesById = new Map();
-
-const Device = require('./models/Device'); // Import Device model for persistent ID lookup
-
+const Device = require('./models/Device');
+const RemoteSession = require('./models/RemoteSession');
+const { getMeetingParticipants, emitToUser, emitToDevice } = require('./socketManager');
+const { generateSessionToken } = require('./utils/sessionToken');
 
 let ioInstance = null;
 
@@ -28,15 +11,13 @@ let ioInstance = null;
 // ---------------------------------------------------------------------------
 
 function generateSessionId() {
-  return (
-    Math.random().toString(36).slice(2) + Date.now().toString(36)
-  );
+  return (Math.random().toString(36).slice(2) + Date.now().toString(36));
 }
 
 function getAuthContextFromReq(req) {
   const authHeader = req.headers['authorization'] || req.headers['Authorization'];
 
-  // Allow overriding via custom headers for testing
+  // Allow overriding via custom headers for testing/dev
   if (req.headers['x-user-id']) {
     return {
       userId: String(req.headers['x-user-id']),
@@ -45,12 +26,12 @@ function getAuthContextFromReq(req) {
   }
 
   if (!authHeader || typeof authHeader !== 'string') {
-    return { userId: 'local-user', name: 'Local User' };
+    return { userId: null, name: 'Guest' };
   }
 
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match) {
-    return { userId: 'local-user', name: 'Local User' };
+    return { userId: null, name: 'Guest' };
   }
 
   const token = match[1];
@@ -65,65 +46,7 @@ function getAuthContextFromReq(req) {
     console.warn('[auth] Failed to decode Authorization token:', err.message);
   }
 
-  return { userId: 'local-user', name: 'Local User' };
-}
-
-function trackSocket(map, key, socketId) {
-  if (!key) return;
-  const id = String(key);
-  if (!map.has(id)) {
-    map.set(id, new Set());
-  }
-  map.get(id).add(socketId);
-}
-
-function untrackSocket(map, key, socketId) {
-  if (!key) return;
-  const id = String(key);
-  const set = map.get(id);
-  if (!set) return;
-  set.delete(socketId);
-  if (set.size === 0) {
-    map.delete(id);
-  }
-}
-
-
-function emitToUser(userId, event, payload) {
-  if (!ioInstance || !userId) return;
-
-  console.log(`[desklink] emitToUser(${userId}, ${event}) - checking map...`);
-  const set = onlineUsersById.get(String(userId));
-  if (!set || set.size === 0) {
-    console.warn(`[desklink] emitToUser: User ${userId} NOT FOUND in onlineUsersById. Available keys:`, Array.from(onlineUsersById.keys()));
-    return;
-  }
-
-  set.forEach((socketId) => {
-    const socket = ioInstance.sockets.sockets.get(socketId);
-    if (socket) {
-      console.log(`[desklink] emitToUser: Sending to socket ${socketId}`);
-      socket.emit(event, payload);
-    } else {
-      console.warn(`[desklink] emitToUser: Socket ${socketId} in map but not in ioInstance`);
-    }
-  });
-}
-
-function emitToDevice(deviceId, event, payload) {
-  if (!ioInstance || !deviceId) return;
-  const set = onlineDevicesById.get(String(deviceId));
-  if (!set) return;
-  set.forEach((socketId) => {
-    const socket = ioInstance.sockets.sockets.get(socketId);
-    if (socket) {
-      socket.emit(event, payload);
-    }
-  });
-}
-
-function generateEphemeralToken(kind, sessionId) {
-  return `${kind}-${sessionId}-${Math.random().toString(36).slice(2, 10)}`;
+  return { userId: null, name: 'Guest' };
 }
 
 // ---------------------------------------------------------------------------
@@ -142,8 +65,6 @@ function initDesklink(app, server, io) {
 
   // ---------------------------------------------------------------------------
   // REST API Routes
-  // Note: These DO NOT use the 'protect' middleware from backend, allowing guest access.
-  // We manually check tokens/headers in getAuthContextFromReq where needed.
   // ---------------------------------------------------------------------------
 
   // Health check specific to desklink
@@ -151,157 +72,148 @@ function initDesklink(app, server, io) {
     res.json({ status: 'ok', scope: 'desklink-module', timestamp: new Date().toISOString() });
   });
 
-  // /api/remote/meeting-request
+  // POST /api/remote/meeting-request
   app.post('/api/remote/meeting-request', async (req, res) => {
     const { userId, name } = getAuthContextFromReq(req);
-    const { toUserId } = req.body || {};
+    const { toUserId, meetingId } = req.body || {};
 
-    console.log(`[desklink] meeting-request: From ${userId} (${name}) -> To ${toUserId}`);
+    console.log(`[desklink] meeting-request: From ${userId} (${name}) -> To ${toUserId} (Meeting: ${meetingId})`);
 
-    if (!toUserId) {
-      return res.status(400).json({ message: 'toUserId is required' });
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    if (!toUserId) return res.status(400).json({ message: 'toUserId is required' });
+    if (!meetingId) return res.status(400).json({ message: 'meetingId is required' });
+
+    // 1. Validate Meeting Membership
+    const participants = getMeetingParticipants(meetingId);
+    if (!participants.includes(userId) || !participants.includes(toUserId)) {
+      return res.status(403).json({ message: 'Both users must be in the specified meeting' });
     }
 
     const sessionId = generateSessionId();
 
-    // Resolve device ID: Prefer registered Agent Device > Header > Web fallback
-    let controllerDeviceId = null;
+    // 2. Refresh target device (optional but good for debugging)
+    // We don't necessarily select the device HERE, we let the target user's agent confirm availability.
+    // But we need to know if they have ANY online device?
+    // Let's settle on: The REQUEST goes to the User. The User + Agent approves it.
 
-    // 1. Check if specific device requested in headers
-    if (req.headers['x-device-id']) controllerDeviceId = String(req.headers['x-device-id']);
-    else if (req.headers['x-controller-device-id']) controllerDeviceId = String(req.headers['x-controller-device-id']);
-
-    // 2. Look up the user's registered agent device from MongoDB
-    if (!controllerDeviceId) {
-      try {
-        const device = await Device.findOne({
-          userId: userId,
-          blocked: false,
-          deleted: false
-        }).sort({ lastOnline: -1 }); // Get most recently online device
-
-        if (device) {
-          controllerDeviceId = device.deviceId;
-          console.log(`[desklink] Resolved deviceId for user ${userId} -> ${controllerDeviceId}`);
-        } else {
-          console.log(`[desklink] No registered device found for user ${userId}, falling back to web ID.`);
-        }
-      } catch (err) {
-        console.error('[desklink] Error looking up device:', err);
-      }
-    }
-
-    // 3. Fallback to web ID (Signaling only, no control)
-    if (!controllerDeviceId) {
-      controllerDeviceId = `web-${userId}`;
-    }
-
-    const session = {
+    // 3. Create Session in DB (Pending)
+    const session = await RemoteSession.create({
       sessionId,
-      controllerUserId: String(userId),
-      targetUserId: String(toUserId),
-      controllerDeviceId,
-      receiverDeviceId: null,
-      permissions: {},
-      status: 'requested',
-      createdAt: Date.now(),
-    };
-
-    sessions.set(sessionId, session);
+      callerUserId: userId,
+      receiverUserId: toUserId,
+      callerDeviceId: `web-${userId}`, // Viewer is usually web
+      status: 'pending',
+      meta: { meetingId }
+    });
 
     const payload = {
       sessionId,
+      meetingId,
       fromUserId: String(userId),
-      fromDeviceId: controllerDeviceId,
       callerName: name,
-      receiverDeviceId: null,
     };
 
     console.log(`[desklink] emitting request events to target user ${toUserId}`);
+    // Emit to frontend (for UI notification) AND agent (for system tray popup)
     emitToUser(String(toUserId), 'desklink-remote-request', payload);
     emitToUser(String(toUserId), 'remote-access-request', payload);
-
-    console.log('[desklink] created session', sessionId, 'from', userId, 'to', toUserId);
 
     return res.status(201).json({ session: { sessionId } });
   });
 
-  // /api/remote/accept
-  app.post('/api/remote/accept', (req, res) => {
+  // POST /api/remote/accept
+  app.post('/api/remote/accept', async (req, res) => {
     const { userId } = getAuthContextFromReq(req);
     const { sessionId, receiverDeviceId, permissions } = req.body || {};
 
-    if (!sessionId) {
-      return res.status(400).json({ message: 'sessionId is required' });
-    }
+    if (!sessionId) return res.status(400).json({ message: 'sessionId is required' });
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
 
-    const session = sessions.get(sessionId);
-    if (!session) {
-      return res.status(404).json({ message: 'Session not found' });
-    }
+    const session = await RemoteSession.findOne({ sessionId });
+    if (!session) return res.status(404).json({ message: 'Session not found' });
 
-    // Basic ownership check
-    if (
-      session.targetUserId &&
-      String(session.targetUserId) !== String(userId) &&
-      !String(session.targetUserId).startsWith('anon-')
-    ) {
+    // Validate ownership
+    if (String(session.receiverUserId) !== String(userId)) {
       return res.status(403).json({ message: 'Not authorized to accept this session' });
     }
 
-    if (session.status !== 'requested') {
-      return res.status(400).json({ message: 'Session is not in requested state' });
+    if (session.status !== 'pending') {
+      return res.status(400).json({ message: 'Session is not pending' });
     }
 
-    const effectiveReceiverDeviceId =
-      (receiverDeviceId && String(receiverDeviceId)) ||
-      session.receiverDeviceId ||
-      `agent-${userId}`;
+    // Resolve Receiver Device (Host)
+    // Preference: 1. Specified in body (from Agent) 2. Auto-lookup online device
+    let effectiveReceiverDeviceId = receiverDeviceId;
+    if (!effectiveReceiverDeviceId) {
+      const device = await Device.findOne({
+        userId: userId,
+        status: 'online',
+        blocked: false
+      }).sort({ lastOnline: -1 });
+      if (device) effectiveReceiverDeviceId = device.deviceId;
+    }
 
+    if (!effectiveReceiverDeviceId) {
+      // Strict: Fail if no device to control
+      // return res.status(400).json({ message: 'No active device found to host session' });
+      // Lenient (dev):
+      effectiveReceiverDeviceId = `agent-${userId}`;
+    }
+
+    // Update Session
     session.status = 'accepted';
     session.receiverDeviceId = effectiveReceiverDeviceId;
-    session.permissions = {
-      ...(session.permissions || {}),
-      ...(permissions || {}),
-    };
+    session.startedAt = new Date();
+    // Merge permissions
+    if (permissions) {
+      session.permissions = { ...session.permissions, ...permissions };
+    }
 
-    const callerToken = generateEphemeralToken('caller', sessionId);
-    const receiverToken = generateEphemeralToken('receiver', sessionId);
+    // Generate Tokens/metadata
+    // Use the utility that creates JWTs valid for socketManager verification
+    const callerToken = generateSessionToken(
+      sessionId,
+      session.callerUserId,
+      session.callerDeviceId || `web-${session.callerUserId}`
+    );
 
-    session.callerToken = callerToken;
-    session.receiverToken = receiverToken;
+    const receiverToken = generateSessionToken(
+      sessionId,
+      session.receiverUserId,
+      session.receiverDeviceId
+    );
+
+    // Persist token for signaling validation? 
+    // Simplified: we won't store ephemeral tokens in DB for now, just session status is enough source of truth.
+
+    await session.save();
 
     const sessionMetadata = {
       sessionId: session.sessionId,
-      callerDeviceId: session.controllerDeviceId,
+      callerDeviceId: session.callerDeviceId,
       receiverDeviceId: session.receiverDeviceId,
       permissions: session.permissions,
     };
 
-    emitToUser(session.controllerUserId, 'desklink-session-start', {
+    // Notify Viewer (Caller)
+    emitToUser(session.callerUserId, 'desklink-session-start', {
       ...sessionMetadata,
       token: callerToken,
       role: 'caller',
     });
+    emitToUser(session.callerUserId, 'remote-access-approved', {
+      ...sessionMetadata
+    });
 
+    // Notify Host (Receiver Agent + Frontend)
     emitToDevice(session.receiverDeviceId, 'desklink-session-start', {
       ...sessionMetadata,
       token: receiverToken,
       role: 'receiver',
     });
-
-    emitToUser(session.controllerUserId, 'desklink-remote-response', {
-      sessionId: session.sessionId,
-      status: 'accepted',
-      viewerDeviceId: session.controllerDeviceId,
-      hostDeviceId: session.receiverDeviceId,
-      callerToken,
-    });
-
-    emitToUser(session.controllerUserId, 'remote-access-accepted', {
-      sessionId: session.sessionId,
-      receiverDeviceId: session.receiverDeviceId,
-      permissions: session.permissions,
+    // Also notify receiver frontend to close modal
+    emitToUser(session.receiverUserId, 'remote-access-accepted', {
+      sessionId
     });
 
     console.log('[desklink] accepted session', sessionId);
@@ -309,168 +221,65 @@ function initDesklink(app, server, io) {
     return res.json({ session, callerToken, receiverToken });
   });
 
-  // /api/remote/reject
-  app.post('/api/remote/reject', (req, res) => {
+  // POST /api/remote/reject
+  app.post('/api/remote/reject', async (req, res) => {
     const { userId } = getAuthContextFromReq(req);
     const { sessionId } = req.body || {};
 
-    if (!sessionId) {
-      return res.status(400).json({ message: 'sessionId is required' });
-    }
+    if (!sessionId) return res.status(400).json({ message: 'sessionId is required' });
 
-    const session = sessions.get(sessionId);
-    if (!session) {
-      return res.status(404).json({ message: 'Session not found' });
-    }
+    const session = await RemoteSession.findOne({ sessionId });
+    if (!session) return res.status(404).json({ message: 'Session not found' });
 
-    if (
-      session.targetUserId &&
-      String(session.targetUserId) !== String(userId) &&
-      !String(session.targetUserId).startsWith('anon-')
-    ) {
+    if (String(session.receiverUserId) !== String(userId)) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
     session.status = 'rejected';
+    session.endedAt = new Date();
+    await session.save();
 
-    emitToUser(session.controllerUserId, 'desklink-remote-response', {
-      sessionId: session.sessionId,
-      status: 'rejected',
-    });
-
-    emitToUser(session.controllerUserId, 'remote-access-rejected', {
+    emitToUser(session.callerUserId, 'remote-access-rejected', {
       sessionId: session.sessionId,
     });
 
     return res.json({ session });
   });
 
-  // /api/remote/complete
-  app.post(['/api/remote/complete', '/api/remote/session/:id/complete'], (req, res) => {
+  // POST /api/remote/complete
+  app.post(['/api/remote/complete', '/api/remote/session/:id/complete'], async (req, res) => {
     const { userId } = getAuthContextFromReq(req);
     const paramId = req.params && req.params.id;
     const bodyId = req.body && req.body.sessionId;
     const sessionId = paramId || bodyId;
 
-    if (!sessionId) {
-      return res.status(400).json({ message: 'sessionId is required' });
-    }
+    if (!sessionId) return res.status(400).json({ message: 'sessionId is required' });
 
-    const session = sessions.get(sessionId);
-    if (!session) {
-      return res.status(404).json({ message: 'Session not found' });
+    const session = await RemoteSession.findOne({ sessionId });
+    if (!session) return res.status(404).json({ message: 'Session not found' });
+
+    // Allow either party to end
+    if (String(session.callerUserId) !== String(userId) && String(session.receiverUserId) !== String(userId)) {
+      return res.status(403).json({ message: 'Not authorized' });
     }
 
     session.status = 'ended';
+    session.endedAt = new Date();
+    await session.save();
 
-    emitToUser(session.controllerUserId, 'desklink-remote-response', {
-      sessionId: session.sessionId,
-      status: 'ended',
-    });
-    if (session.targetUserId) {
-      emitToUser(session.targetUserId, 'desklink-remote-response', {
-        sessionId: session.sessionId,
-        status: 'ended',
-      });
-    }
+    const endPayload = { sessionId: session.sessionId, status: 'ended' };
+
+    emitToUser(session.callerUserId, 'desklink-remote-response', endPayload);
+    emitToUser(session.receiverUserId, 'desklink-remote-response', endPayload);
+
+    // Also explicitly notify WebRTC components to stop
+    if (session.callerUserId) emitToUser(session.callerUserId, 'webrtc-cancel', endPayload);
+    if (session.receiverUserId) emitToUser(session.receiverUserId, 'webrtc-cancel', endPayload);
+    if (session.receiverDeviceId) emitToDevice(session.receiverDeviceId, 'webrtc-cancel', endPayload);
 
     console.log('[desklink] ended session', sessionId);
 
     return res.json({ session });
-  });
-
-  // /api/remote/turn-token
-  // REMOVED: We want to use the main backend's implementation (in remoteRoutes.js)
-  // because it provides actual TURN credentials if configured, whereas this was checks STUN-only.
-  // Since we mount this module BEFORE remoteRoutes, removing this handler allows
-  // the request to fall through to remoteRoutes.
-  /*
-  app.get('/api/remote/turn-token', (req, res) => {
-    return res.json({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
-  });
-  */
-
-
-  // ---------------------------------------------------------------------------
-  // Socket.IO Events
-  // ---------------------------------------------------------------------------
-
-  io.on('connection', (socket) => {
-    // Adapter: Populate socket.data.userId from what socketManager set
-    // socketManager sets socket.userId. desklink uses socket.data.userId.
-    if (socket.userId && !socket.data.userId) {
-      socket.data.userId = socket.userId;
-    }
-
-    const userId = socket.data.userId || 'guest';
-
-    // Explicitly track for desklink internal map
-    trackSocket(onlineUsersById, userId, socket.id);
-
-    socket.on('register', ({ deviceId }) => {
-      // socketManager also handles 'register', so this might double-fire logs, which is fine.
-      if (!deviceId) return;
-      const devId = String(deviceId);
-      socket.data.deviceId = devId;
-      trackSocket(onlineDevicesById, devId, socket.id);
-    });
-
-    // WebRTC Offer
-    socket.on('webrtc-offer', ({ sessionId, fromUserId, fromDeviceId, toDeviceId, sdp, token }) => {
-      // Check if this is a DeskLink in-memory session
-      const session = sessions.get(sessionId);
-      if (session) {
-        // Handle using desklink logic
-        const payload = { sessionId, fromUserId, fromDeviceId, toDeviceId, sdp, token };
-        console.log('[desklink] relay offer', sessionId);
-        emitToDevice(toDeviceId, 'webrtc-offer', payload);
-      } else {
-        // Pass through? socketManager probably handles it if it finds it in Mongo.
-      }
-    });
-
-    // WebRTC Answer
-    socket.on('webrtc-answer', ({ sessionId, fromUserId, fromDeviceId, toDeviceId, sdp, token }) => {
-      const session = sessions.get(sessionId);
-      if (session) {
-        const payload = { sessionId, fromUserId, fromDeviceId, toDeviceId, sdp, token };
-        console.log('[desklink] relay answer', sessionId);
-        emitToDevice(toDeviceId, 'webrtc-answer', payload);
-      }
-    });
-
-    // WebRTC ICE
-    socket.on('webrtc-ice', ({ sessionId, fromUserId, fromDeviceId, toDeviceId, candidate, token }) => {
-      const session = sessions.get(sessionId);
-      if (session) {
-        const payload = { sessionId, fromUserId, fromDeviceId, toDeviceId, candidate, token };
-        emitToDevice(toDeviceId, 'webrtc-ice', payload);
-      }
-    });
-
-    // WebRTC Cancel
-    socket.on('webrtc-cancel', ({ sessionId, fromUserId }) => {
-      const session = sessions.get(sessionId);
-      if (session) {
-        session.status = 'ended';
-        const payload = { sessionId };
-        if (session.controllerUserId) emitToUser(session.controllerUserId, 'webrtc-cancel', payload);
-        if (session.targetUserId) emitToUser(session.targetUserId, 'webrtc-cancel', payload);
-        if (session.controllerDeviceId) emitToDevice(session.controllerDeviceId, 'webrtc-cancel', payload);
-        if (session.receiverDeviceId) emitToDevice(session.receiverDeviceId, 'webrtc-cancel', payload);
-      }
-    });
-
-    // Clean up on disconnect
-    socket.on('disconnect', () => {
-      untrackSocket(onlineUsersById, userId, socket.id);
-      if (socket.data.deviceId) {
-        untrackSocket(onlineDevicesById, socket.data.deviceId, socket.id);
-      }
-    });
-
   });
 
   console.log('[DeskLink] Module initialized successfully.');

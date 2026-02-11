@@ -30,89 +30,27 @@ public class SocketClient : IAsyncDisposable
         var ownerJwt = Environment.GetEnvironmentVariable("AGENT_OWNER_JWT");
         if (string.IsNullOrWhiteSpace(ownerJwt))
         {
-            Console.Error.WriteLine("[Agent] AGENT_OWNER_JWT is not set; cannot provision agent token.");
+            Console.Error.WriteLine("[Agent] AGENT_OWNER_JWT is not set.");
             return false;
         }
 
-        // Provision an agent-specific JWT from the backend
-        var provisionUrl = serverUrl.TrimEnd('/') + "/api/agent/provision";
-        string agentJwt;
-        string ownerUserId;
-
-        try
+        // NO PROVISIONING NEEDED. We use the Owner (User) JWT directly.
+        // This authenticates the socket as the User, and we register the DeviceId on connection.
+        _agentJwt = ownerJwt;
+        _ownerUserId = ExtractUserIdFromToken(_agentJwt);
+        if (string.IsNullOrEmpty(_ownerUserId))
         {
-            using var http = new System.Net.Http.HttpClient();
-            http.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ownerJwt);
-
-            var resp = await http.PostAsync(provisionUrl, new System.Net.Http.StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
-            var body = await resp.Content.ReadAsStringAsync();
-
-            if (!resp.IsSuccessStatusCode)
-            {
-                Console.Error.WriteLine($"[Agent] Provision failed ({(int)resp.StatusCode}): {body}");
-                return false;
-            }
-
-            using var doc = JsonDocument.Parse(body);
-            var root = doc.RootElement;
-            agentJwt = root.GetProperty("agentJwt").GetString() ?? string.Empty;
-            ownerUserId = root.GetProperty("ownerUserId").GetString() ?? string.Empty;
-
-            // After successful provision, auto-register this device with the backend
-            // so the mapping deviceId -> userId is always present without any manual step.
-            try
-            {
-                var registerUrl = serverUrl.TrimEnd('/') + "/api/device/register";
-                var osInfo = Environment.OSVersion.ToString();
-                var deviceName = Environment.MachineName;
-                var platform = Environment.OSVersion.Platform.ToString();
-
-                var registerPayload = new
-                {
-                    userId = ownerUserId,
-                    deviceId = _deviceId,
-                    osInfo,
-                    deviceName,
-                    platform
-                };
-
-                var registerJson = JsonSerializer.Serialize(registerPayload);
-                using var registerContent = new System.Net.Http.StringContent(registerJson, System.Text.Encoding.UTF8, "application/json");
-                var registerResp = await http.PostAsync(registerUrl, registerContent);
-                var registerBody = await registerResp.Content.ReadAsStringAsync();
-
-                if (!registerResp.IsSuccessStatusCode)
-                {
-                  Console.Error.WriteLine($"[Agent] /api/device/register failed ({(int)registerResp.StatusCode}): {registerBody}");
-                }
-                else
-                {
-                  Console.WriteLine("[Agent] Device registered successfully with backend.");
-                }
-            }
-            catch (Exception regEx)
-            {
-                Console.Error.WriteLine("[Agent] Device register exception: " + regEx);
-            }
+             Console.WriteLine("[Agent] Warning: Could not extract user ID from token. WebRTC might fail.");
+             _ownerUserId = "unknown";
         }
-        catch (Exception ex)
+        else 
         {
-            Console.Error.WriteLine("[Agent] Provision exception: " + ex);
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(agentJwt))
-        {
-            Console.Error.WriteLine("[Agent] Provision returned empty agentJwt; aborting.");
-            return false;
-        }
-
-        Console.WriteLine("[Agent] Provision success for user=" + ownerUserId);
-
-        // Cache agentJwt and ownerUserId for use by WebRTC helper
-        _agentJwt = agentJwt;
-        _ownerUserId = ownerUserId;
+             Console.WriteLine($"[Agent] Extracted User ID: {_ownerUserId}");
+        } 
+        
+        // We'll decode the JWT simply to get the user ID for logs/logic if needed, 
+        // or just rely on backend. For now, let's skip local decode unless strictly needed.
+        // The backend knows who we are.
 
         // Use fully-qualified type to avoid namespace/type ambiguity
         _client = new SocketIOClient.SocketIO(serverUrl, new SocketIOOptions
@@ -122,7 +60,7 @@ public class SocketClient : IAsyncDisposable
             ReconnectionDelay = 2000,
             Auth = new Dictionary<string, object>
             {
-                { "token", agentJwt }
+                { "token", _agentJwt }
             }
         });
 
@@ -132,7 +70,7 @@ public class SocketClient : IAsyncDisposable
             Console.WriteLine("[Socket] connected ✓");
 
             // Register device so server maps deviceId -> socketId and persists it
-            await Emit("register", new { deviceId = _deviceId });
+            await Emit("register", new { deviceId = _deviceId, label = Environment.MachineName, osInfo = Environment.OSVersion.ToString() });
 
             Console.WriteLine("[Socket] register emitted ✓");
         };
@@ -144,31 +82,44 @@ public class SocketClient : IAsyncDisposable
         };
 
         // Server -> Agent events
-        _client.On("remote-request", response =>
+
+        // 1. INCOMING REQUEST
+        _client.On("desklink-remote-request", async response =>
         {
-            Console.WriteLine("[Socket] remote-request received");
-            try { _ipc.NotifyIncomingRemoteRequest(); } catch (Exception e) { Console.Error.WriteLine("[IPC] NotifyIncomingRemoteRequest error: " + e); }
+             try 
+             {
+                var json = response.GetValue<JsonElement>();
+                var sessionId = json.GetProperty("sessionId").GetString();
+                var callerName = json.GetProperty("callerName").GetString();
+                var meetingId = json.GetProperty("meetingId").GetString();
+
+                Console.WriteLine($"[Socket] desklink-remote-request: {callerName} wants access (Session: {sessionId})");
+
+                // Show native dialog (blocking on a separate thread usually, but here we await it or run it)
+                // Since this callback might be on a socket/threadpool thread, showing UI is okay for a Console app (MessageBox blocks that thread).
+                // For better UX, we run it on a task to not block socket loop if there were other events (though unlikely to have many concurrent).
+                
+                // Fire and forget the dialog task? No, we need result.
+                bool accepted = await Task.Run(() => DeskLinkAgent.Utils.UserInterface.ShowRequestDialog(callerName));
+
+                if (accepted)
+                {
+                    Console.WriteLine($"[Agent] Request ACCEPTED by user. Sending API call...");
+                    await AcceptRemoteRequest(sessionId, meetingId);
+                }
+                else
+                {
+                    Console.WriteLine($"[Agent] Request REJECTED by user.");
+                    await RejectRemoteRequest(sessionId);
+                }
+             }
+             catch (Exception ex)
+             {
+                 Console.Error.WriteLine("[Socket] Error handling desklink-remote-request: " + ex);
+             }
         });
 
-        _client.On("remote-accept", response =>
-        {
-            Console.WriteLine("[Socket] remote-accept received");
-            try { _ipc.NotifyRemoteSessionAccepted(); } catch (Exception e) { Console.Error.WriteLine("[IPC] NotifyRemoteSessionAccepted error: " + e); }
-        });
-
-        _client.On("remote-reject", response =>
-        {
-            Console.WriteLine("[Socket] remote-reject received");
-        });
-
-        _client.On("remote-end", response =>
-        {
-            Console.WriteLine("[Socket] remote-end received");
-            try { _ipc.NotifyRemoteSessionEnded(); } catch (Exception e) { Console.Error.WriteLine("[IPC] NotifyRemoteSessionEnded error: " + e); }
-            StopWebRTC();
-        });
-
-        // WebRTC signaling events
+        // 2. SESSION STARTED (Auto-start WebRTC)
         _client.On("desklink-session-start", response =>
         {
             try
@@ -176,13 +127,19 @@ public class SocketClient : IAsyncDisposable
                 var json = response.GetValue<JsonElement>();
                 var sessionId = json.GetProperty("sessionId").GetString();
                 var token = json.GetProperty("token").GetString();
-                var role = json.GetProperty("role").GetString();
+                var role = json.GetProperty("role").GetString(); // "receiver" (Host) or "caller" (Viewer)
                 var callerDeviceId = json.GetProperty("callerDeviceId").GetString();
                 var receiverDeviceId = json.GetProperty("receiverDeviceId").GetString();
 
                 Console.WriteLine($"[Socket] desklink-session-start => session={sessionId}, role={role}");
 
-                // Start WebRTC helper (null-forgiving since we validated above)
+                // Start WebRTC helper
+                // Note: We pass _agentJwt (which is User Token) to NodeHelper so it can also auth with backend
+                // NodeHelper needs: sessionId, token (ephemeral), deviceId, userId (owner), remoteDeviceId
+                
+                // We assume _ownerUserId is needed. If we didn't decode it, we might need to fetch it or pass 'unknown'.
+                // Ideally backend gives us everything we need.
+                
                 StartWebRTC(sessionId!, token!, role!, callerDeviceId!, receiverDeviceId!, serverUrl);
             }
             catch (Exception ex)
@@ -190,11 +147,21 @@ public class SocketClient : IAsyncDisposable
                 Console.Error.WriteLine("[Socket] error parsing desklink-session-start: " + ex);
             }
         });
-
-        _client.On("desklink-session-ended", _ =>
+        
+        // 3. SESSION ENDED
+        _client.On("desklink-remote-response", response =>
         {
-            Console.WriteLine("[Socket] desklink-session-ended");
-            StopWebRTC();
+             try
+             {
+                var json = response.GetValue<JsonElement>();
+                if (json.TryGetProperty("status", out var statusProp) && statusProp.GetString() == "ended")
+                {
+                    Console.WriteLine("[Socket] desklink-remote-response (ended)");
+                    try { _ipc.NotifyRemoteSessionEnded(); } catch {}
+                    StopWebRTC();
+                }
+             }
+             catch {}
         });
 
         _client.On("webrtc-cancel", _ =>
@@ -210,6 +177,7 @@ public class SocketClient : IAsyncDisposable
         }
 
         await _client.ConnectAsync();
+        StartHeartbeatLoop(serverUrl);
         return true;
     }
 
@@ -318,10 +286,144 @@ public class SocketClient : IAsyncDisposable
         }
     }
 
+    private System.Threading.CancellationTokenSource? _heartbeatCts;
+
+    private void StartHeartbeatLoop(string serverUrl)
+    {
+        _heartbeatCts?.Cancel();
+        _heartbeatCts = new System.Threading.CancellationTokenSource();
+        var token = _heartbeatCts.Token;
+
+        Task.Run(async () =>
+        {
+            var heartbeatUrl = serverUrl.TrimEnd('/') + "/api/device/heartbeat";
+            Console.WriteLine("[Agent] Starting heartbeat loop...");
+
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    using var http = new System.Net.Http.HttpClient();
+                    // agentJwt is a valid user token generated by provision
+                    http.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _agentJwt);
+
+                    var payload = new { deviceId = _deviceId, status = "online" };
+                    var json = JsonSerializer.Serialize(payload);
+                    var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+                    var resp = await http.PostAsync(heartbeatUrl, content, token);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        Console.Error.WriteLine($"[Agent] Heartbeat failed: {resp.StatusCode}");
+                    }
+                }
+                catch (TaskCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[Agent] Heartbeat error: {ex.Message}");
+                }
+
+                try { await Task.Delay(30000, token); } catch { break; }
+            }
+            Console.WriteLine("[Agent] Heartbeat loop stopped.");
+        }, token);
+    }
+
+    private string? ExtractUserIdFromToken(string token)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length != 3) return null;
+
+            var payload = parts[1];
+            // Base64Url decode
+            payload = payload.Replace('-', '+').Replace('_', '/');
+            switch (payload.Length % 4)
+            {
+                case 2: payload += "=="; break;
+                case 3: payload += "="; break;
+            }
+
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("id", out var idProp)) return idProp.GetString();
+            if (doc.RootElement.TryGetProperty("userId", out var uIdProp)) return uIdProp.GetString();
+            if (doc.RootElement.TryGetProperty("_id", out var _idProp)) return _idProp.GetString();
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("[Agent] JWT decode error: " + ex.Message);
+            return null;
+        }
+    }
+
+    private async Task AcceptRemoteRequest(string sessionId, string meetingId = "")
+    {
+        try
+        {
+            var url = _client?.ServerUrl.TrimEnd('/') + "/api/remote/accept";
+            using var http = new System.Net.Http.HttpClient();
+            http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _agentJwt);
+
+            var payload = new 
+            {
+                sessionId,
+                receiverDeviceId = _deviceId,
+                permissions = new { allowControl = true, viewOnly = false } // Default permissions
+            };
+
+            var json = JsonSerializer.Serialize(payload);
+            var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var resp = await http.PostAsync(url, content);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var err = await resp.Content.ReadAsStringAsync();
+                Console.Error.WriteLine($"[Agent] Accept failed ({resp.StatusCode}): {err}");
+            }
+            else
+            {
+                Console.WriteLine("[Agent] Successfully accepted session locally. Waiting for start signal...");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("[Agent] Accept exception: " + ex.Message);
+        }
+    }
+
+    private async Task RejectRemoteRequest(string sessionId)
+    {
+        try
+        {
+            var url = _client?.ServerUrl.TrimEnd('/') + "/api/remote/reject";
+            using var http = new System.Net.Http.HttpClient();
+            http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _agentJwt);
+
+            var payload = new { sessionId };
+            var json = JsonSerializer.Serialize(payload);
+            var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            await http.PostAsync(url, content);
+            Console.WriteLine("[Agent] Session rejected.");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("[Agent] Reject exception: " + ex.Message);
+        }
+    }
+
     public ValueTask DisposeAsync()
     {
         try
         {
+            _heartbeatCts?.Cancel();
             StopWebRTC();
             _client?.Dispose();
         }

@@ -147,6 +147,17 @@ export function MeetingRemoteControlProvider({ children }) {
     [token] // Removed 'user' dependency as we might use senderAuthId
   );
 
+  const checkUserAgentStatus = useCallback(async (targetUserId) => {
+    if (!token || !targetUserId) return 'offline';
+    try {
+      const data = await desklinkApi.getUserAgentStatus(token, targetUserId);
+      return data?.status || 'offline';
+    } catch (err) {
+      console.warn('[MeetingRemoteControl] checkUserAgentStatus failed', err);
+      return 'offline';
+    }
+  }, [token]);
+
   // Owner: accept/reject incoming request inside meeting
   const acceptIncomingRequest = useCallback(
     async (acceptPermissions) => {
@@ -245,6 +256,7 @@ export function MeetingRemoteControlProvider({ children }) {
 
     // Request flow from controller side
     requestControlForUser,
+    checkUserAgentStatus,
 
     // WebRTC state for remote desktop
     connectionState,

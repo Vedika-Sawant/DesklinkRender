@@ -38,6 +38,16 @@ const deviceSchema = new mongoose.Schema(
       maxlength: 60,
       default: '',
     },
+    status: {
+      type: String,
+      enum: ['online', 'offline', 'busy'],
+      default: 'offline',
+      index: true,
+    },
+    lastHeartbeat: {
+      type: Date,
+      default: Date.now,
+    },
     lastOnline: {
       type: Date,
       default: Date.now,

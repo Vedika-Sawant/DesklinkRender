@@ -78,7 +78,10 @@ function VideoRoomInner({
     incomingRequest,
     acceptIncomingRequest,
     rejectIncomingRequest,
+    checkUserAgentStatus, // Exported from context
   } = useMeetingRemoteControl();
+
+
 
   // Initialize local media based on initial audio/video flags
   useEffect(() => {
@@ -137,6 +140,32 @@ function VideoRoomInner({
         })),
     [allParticipants, userId]
   );
+
+  // Agent Status Tracking
+  // Moved here to ensure controllerCandidates is defined
+  const [agentStatuses, setAgentStatuses] = React.useState({});
+
+  useEffect(() => {
+    let active = true;
+    const fetchStatuses = async () => {
+      if (!controllerCandidates || controllerCandidates.length === 0) return;
+
+      const newStatuses = {};
+      await Promise.all(
+        controllerCandidates.map(async (p) => {
+          if (!p.targetUserId) return;
+          const status = await checkUserAgentStatus(p.targetUserId);
+          if (active) newStatuses[p.id] = status;
+        })
+      );
+
+      if (active) setAgentStatuses((prev) => ({ ...prev, ...newStatuses }));
+    };
+
+    fetchStatuses();
+    const interval = setInterval(fetchStatuses, 30000); // 30s poll
+    return () => { active = false; clearInterval(interval); };
+  }, [controllerCandidates, checkUserAgentStatus]);
 
   const {
     hasScreenShare,
@@ -272,41 +301,51 @@ function VideoRoomInner({
                         Remote control unavailable: no participants with a resolved backend userId.
                       </div>
                     ) : (
-                      controllerCandidates.map((p) => (
-                        <div
-                          key={p.id}
-                          className="flex items-center justify-between rounded-md bg-slate-800/80 px-2 py-1"
-                        >
-                          <div className="flex flex-col">
-                            <span className="text-[11px] font-medium text-slate-100">{p.name || 'Participant'}</span>
-                            <span className="text-[10px] text-slate-500 break-all">
-                              Backend userId: {p.targetUserId || 'unresolved (no authUserId from server)'}
-                            </span>
-                          </div>
-                          <div className="flex flex-col items-end gap-0.5">
-                            <button
-                              type="button"
-                              disabled={!p.targetUserId}
-                              onClick={() =>
-                                p.targetUserId &&
-                                requestControlForUser({
-                                  targetUserId: p.targetUserId,
-                                  targetName: p.name || 'Participant',
-                                  senderAuthId: allParticipants.find((me) => me.id === userId)?.authUserId,
-                                })
-                              }
-                              className="text-[10px] px-2 py-1 rounded-md bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                              Request
-                            </button>
-                            {!p.targetUserId && (
-                              <span className="text-[9px] text-amber-400">
-                                Cannot request: backend userId not resolved (check auth/contact link)
+                      controllerCandidates.map((p) => {
+                        const isAgentOnline = agentStatuses[p.id] === 'online';
+                        const statusColor = isAgentOnline ? 'bg-emerald-500' : 'bg-slate-600';
+                        const statusText = isAgentOnline ? 'Ready' : 'Agent Offline';
+
+                        return (
+                          <div
+                            key={p.id}
+                            className="flex items-center justify-between rounded-md bg-slate-800/80 px-2 py-1"
+                          >
+                            <div className="flex flex-col">
+                              <span className="text-[11px] font-medium text-slate-100 flex items-center gap-2">
+                                {p.name || 'Participant'}
+                                <span className={`w-1.5 h-1.5 rounded-full ${statusColor}`} title={statusText}></span>
                               </span>
-                            )}
+                              <span className="text-[10px] text-slate-500 break-all">
+                                {p.targetUserId ? (
+                                  isAgentOnline ? 'Agent Ready' : 'Agent Not Detected'
+                                ) : 'Not Registered'}
+                              </span>
+                            </div>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <button
+                                type="button"
+                                disabled={!p.targetUserId || !isAgentOnline}
+                                onClick={() =>
+                                  p.targetUserId &&
+                                  requestControlForUser({
+                                    targetUserId: p.targetUserId,
+                                    targetName: p.name || 'Participant',
+                                    senderAuthId: allParticipants.find((me) => me.id === userId)?.authUserId,
+                                  })
+                                }
+                                className={`text-[10px] px-2 py-1 rounded-md text-white transition-colors ${!p.targetUserId || !isAgentOnline
+                                  ? 'bg-slate-700 opacity-50 cursor-not-allowed'
+                                  : 'bg-purple-600 hover:bg-purple-500'
+                                  }`}
+                                title={!isAgentOnline ? 'User agent must be running' : 'Request Control'}
+                              >
+                                Request
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 </div>
@@ -315,6 +354,7 @@ function VideoRoomInner({
           </div>
         </div>
       )}
+
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-hidden flex">
@@ -472,8 +512,8 @@ function VideoRoomInner({
                   type="button"
                   onClick={() => setMicLock(!hostMicLocked)}
                   className={`px-2 py-0.5 rounded-full text-[10px] border ${hostMicLocked
-                      ? 'bg-slate-800 border-slate-600 text-slate-200'
-                      : 'bg-emerald-700/70 border-emerald-500 text-emerald-50'
+                    ? 'bg-slate-800 border-slate-600 text-slate-200'
+                    : 'bg-emerald-700/70 border-emerald-500 text-emerald-50'
                     }`}
                 >
                   {hostMicLocked ? 'Disabled' : 'Allowed'}
@@ -486,8 +526,8 @@ function VideoRoomInner({
                   type="button"
                   onClick={() => setCameraLock(!hostCameraLocked)}
                   className={`px-2 py-0.5 rounded-full text-[10px] border ${hostCameraLocked
-                      ? 'bg-slate-800 border-slate-600 text-slate-200'
-                      : 'bg-emerald-700/70 border-emerald-500 text-emerald-50'
+                    ? 'bg-slate-800 border-slate-600 text-slate-200'
+                    : 'bg-emerald-700/70 border-emerald-500 text-emerald-50'
                     }`}
                 >
                   {hostCameraLocked ? 'Disabled' : 'Allowed'}
@@ -500,8 +540,8 @@ function VideoRoomInner({
                   type="button"
                   onClick={() => setChatDisabled(!hostChatDisabled)}
                   className={`px-2 py-0.5 rounded-full text-[10px] border ${hostChatDisabled
-                      ? 'bg-slate-800 border-slate-600 text-slate-200'
-                      : 'bg-emerald-700/70 border-emerald-500 text-emerald-50'
+                    ? 'bg-slate-800 border-slate-600 text-slate-200'
+                    : 'bg-emerald-700/70 border-emerald-500 text-emerald-50'
                     }`}
                 >
                   {hostChatDisabled ? 'Disabled' : 'Allowed'}

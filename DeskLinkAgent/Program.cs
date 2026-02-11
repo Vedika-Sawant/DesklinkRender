@@ -42,7 +42,7 @@
             // Migration: Fix old/wrong URL if present
             if (string.IsNullOrWhiteSpace(_config.ServerUrl) || _config.ServerUrl.Contains("anydesk.onrender.com"))
             {
-                _config.ServerUrl = "https://desklinkrender5.onrender.com";
+                _config.ServerUrl = "https://desklinkrender7.onrender.com";
                 DeviceIdProvider.SaveConfig(_config);
                 Console.WriteLine("[DeskLinkAgent] Migrated config to use correct Server URL.");
             }

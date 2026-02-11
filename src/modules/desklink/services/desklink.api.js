@@ -108,13 +108,25 @@ export const desklinkApi = {
   },
 
   async getTurnToken(token) {
+    if (!token) return null;
     const res = await fetch(`${API_BASE}/remote/turn-token`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
-    return parseJSON(res);
+    if (!res.ok) return null;
+    return res.json();
+  },
+
+  async getUserAgentStatus(token, userId) {
+    if (!token || !userId) return { status: 'offline' };
+    try {
+      const res = await fetch(`${API_BASE}/device/user/${userId}/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return { status: 'offline' };
+      return res.json();
+    } catch (err) {
+      console.warn('getUserAgentStatus error', err);
+      return { status: 'offline' };
+    }
   },
 };
-
-
